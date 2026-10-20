@@ -242,22 +242,49 @@ ce_status_t ce_kan_recurrent_forward(ce_module_t* mod,
     float* m2_data = st->saved_m2->data;
     float* s2_data = st->saved_s2->data;
 
-    /* Temporary buffers per batch element */
-    float* x_t = (float*)malloc((size_t)in_f * sizeof(float));
-    float* h1_raw = (float*)malloc((size_t)H * sizeof(float));
-    float* h1_res = (float*)malloc((size_t)H * sizeof(float));
-    float* h1_n = (float*)malloc((size_t)H * sizeof(float));
-    float* h2_raw = (float*)malloc((size_t)H * sizeof(float));
-    float* h2_res = (float*)malloc((size_t)H * sizeof(float));
-    float* h2_n = (float*)malloc((size_t)H * sizeof(float));
-    float* y3 = (float*)malloc(2 * sizeof(float));
-    float* basis_buf = (float*)malloc((size_t)(in_f > H ? in_f : H) * 4 * sizeof(float));
-    float* silu_buf = (float*)malloc((size_t)(in_f > H ? in_f : H) * sizeof(float));
+    /* Per-thread temporary buffers: the batch loop below runs under
+     * "#pragma omp parallel for", so shared scratch (x_t, h1_*, h2_*,
+     * y3, basis_buf, silu_buf) would be written concurrently by every
+     * thread — a data race corrupting outputs nondeterministically. */
+    int n_threads = omp_get_max_threads();
+    int max_f = (in_f > H) ? in_f : H;
+
+    float* x_t_all    = (float*)malloc((size_t)n_threads * in_f * sizeof(float));
+    float* h1_raw_all = (float*)malloc((size_t)n_threads * H * sizeof(float));
+    float* h1_res_all = (float*)malloc((size_t)n_threads * H * sizeof(float));
+    float* h1_n_all   = (float*)malloc((size_t)n_threads * H * sizeof(float));
+    float* h2_raw_all = (float*)malloc((size_t)n_threads * H * sizeof(float));
+    float* h2_res_all = (float*)malloc((size_t)n_threads * H * sizeof(float));
+    float* h2_n_all   = (float*)malloc((size_t)n_threads * H * sizeof(float));
+    float* y3_all     = (float*)malloc((size_t)n_threads * 2 * sizeof(float));
+    float* basis_all  = (float*)malloc((size_t)n_threads * max_f * 4 * sizeof(float));
+    float* silu_all   = (float*)malloc((size_t)n_threads * max_f * sizeof(float));
+
+    if (!x_t_all || !h1_raw_all || !h1_res_all || !h1_n_all ||
+        !h2_raw_all || !h2_res_all || !h2_n_all || !y3_all ||
+        !basis_all || !silu_all) {
+        free(x_t_all); free(h1_raw_all); free(h1_res_all); free(h1_n_all);
+        free(h2_raw_all); free(h2_res_all); free(h2_n_all); free(y3_all);
+        free(basis_all); free(silu_all);
+        return CE_ERR_OUT_OF_MEMORY;
+    }
 
     /* Main carry loop — sequential across timesteps, parallel across batch */
     for (int t = 0; t < T; t++) {
         #pragma omp parallel for schedule(dynamic) if(B >= 4)
         for (int b = 0; b < B; b++) {
+            int tid = omp_get_thread_num();
+            float* x_t       = x_t_all    + (size_t)tid * in_f;
+            float* h1_raw    = h1_raw_all + (size_t)tid * H;
+            float* h1_res    = h1_res_all + (size_t)tid * H;
+            float* h1_n      = h1_n_all   + (size_t)tid * H;
+            float* h2_raw    = h2_raw_all + (size_t)tid * H;
+            float* h2_res    = h2_res_all + (size_t)tid * H;
+            float* h2_n      = h2_n_all   + (size_t)tid * H;
+            float* y3        = y3_all     + (size_t)tid * 2;
+            float* basis_buf = basis_all  + (size_t)tid * max_f * 4;
+            float* silu_buf  = silu_all   + (size_t)tid * max_f;
+
             const float* inp_bt = input->data + ((int64_t)b * T + t) * in_f;
             float* carry_t = carry_data + (int64_t)b * T + t;
             float carry_val = (t == 0) ? 0.0f : carry_data[(int64_t)b * T + t - 1];
@@ -344,9 +371,9 @@ ce_status_t ce_kan_recurrent_forward(ce_module_t* mod,
     memcpy(output->data, out_data, (size_t)B * T * 2 * sizeof(float));
 
     /* Cleanup temps */
-    free(x_t); free(h1_raw); free(h1_res); free(h1_n);
-    free(h2_raw); free(h2_res); free(h2_n);
-    free(y3); free(basis_buf); free(silu_buf);
+    free(x_t_all); free(h1_raw_all); free(h1_res_all); free(h1_n_all);
+    free(h2_raw_all); free(h2_res_all); free(h2_n_all); free(y3_all);
+    free(basis_all); free(silu_all);
 
     return CE_OK;
 }
