@@ -342,8 +342,11 @@ class RecurrentExpert(Module):
     Processes binary sequences bit-by-bit (LSB to MSB) with hidden state
     and carry propagation.
 
-    Input:  [batch, seq_len, 5] — (a_bit, b_bit, carry_in, op_1, op_2)
+    Input:  [batch, seq_len, 6] — (a_bit, b_bit, carry_slot, op_1, op_2, op_3)
     Output: [batch, seq_len, 2] — (result_logit, carry_logit)
+
+    The C kernel indexes the input with a hardcoded stride of 6, so any
+    other feature width is rejected with ``CEngineError``.
     """
 
     def __init__(self, hidden_size: int = 64, name: str = "recurrent_expert"):
@@ -368,10 +371,13 @@ class RecurrentExpert(Module):
             2,  # output is always [batch, T, 2]
         )
         tmp_out = lib.ce_tensor_zeros(out_shape, 3)
-        check(lib.ce_recurrent_expert_forward(self._handle, input_tensor, tmp_out))
-        # Copy results to caller's output
-        lib.ce_tensor_copy(output_tensor, tmp_out)
-        lib.ce_tensor_release(tmp_out)
+        try:
+            check(lib.ce_recurrent_expert_forward(self._handle, input_tensor, tmp_out))
+            # Copy results to caller's output
+            lib.ce_tensor_copy(output_tensor, tmp_out)
+        finally:
+            # Released on the error path too: shape validation now raises.
+            lib.ce_tensor_release(tmp_out)
 
     def backward(self, grad_output: POINTER(CeTensor), grad_input: POINTER(CeTensor)) -> None:
         check(lib.ce_recurrent_expert_backward(self._handle, grad_output, grad_input))

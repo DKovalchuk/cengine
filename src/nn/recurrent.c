@@ -54,6 +54,21 @@ static void xavier_init(ce_tensor_t* t, int fan_in, int fan_out) {
     }
 }
 
+/* ── I/O shape validation ─────────────────────────────────────────────
+ * The kernels index the input with a hardcoded stride of 6 and write the
+ * output with stride 2 (input layout: a_bit, b_bit, carry_slot, op_1,
+ * op_2, op_3). Any other layout reads/writes out of bounds, so reject
+ * mismatched shapes at the API boundary instead of corrupting memory. */
+static ce_status_t validate_recurrent_io(const ce_tensor_t* input,
+                                         const ce_tensor_t* output) {
+    if (input->ndim != 3 || output->ndim != 3) return CE_ERR_INVALID_SHAPE;
+    if (input->shape[2] != 6) return CE_ERR_INVALID_SHAPE;
+    if (output->shape[2] != 2) return CE_ERR_INVALID_SHAPE;
+    if (output->shape[0] != input->shape[0] ||
+        output->shape[1] != input->shape[1]) return CE_ERR_INVALID_SHAPE;
+    return CE_OK;
+}
+
 ce_module_t* ce_recurrent_expert_create(int hidden_size, const char* name) {
     if (hidden_size <= 0) return NULL;
     ce_module_t* mod = ce_module_create(name ? name : "recurrent_expert");
@@ -109,6 +124,9 @@ ce_status_t ce_recurrent_expert_forward_infer(ce_module_t* mod,
     if (!mod || !input || !output) return CE_ERR_INVALID_ARG;
     ce_recurrent_expert_t* st = (ce_recurrent_expert_t*)mod->internal_state;
     if (!st) return CE_ERR_NOT_INITIALIZED;
+
+    ce_status_t vs = validate_recurrent_io(input, output);
+    if (vs != CE_OK) return vs;
 
     int B = (int)input->shape[0];
     int T = (int)input->shape[1];
@@ -191,6 +209,9 @@ ce_status_t ce_recurrent_expert_forward_infer_prealloc(
     ce_recurrent_expert_t* st = (ce_recurrent_expert_t*)mod->internal_state;
     if (!st) return CE_ERR_NOT_INITIALIZED;
 
+    ce_status_t vs = validate_recurrent_io(input, output);
+    if (vs != CE_OK) return vs;
+
     int B = (int)input->shape[0];
     int T = (int)input->shape[1];
     int H = st->hidden_size;
@@ -264,6 +285,9 @@ ce_status_t ce_recurrent_expert_forward(ce_module_t* mod,
     if (!mod || !input || !output) return CE_ERR_INVALID_ARG;
     ce_recurrent_expert_t* st = (ce_recurrent_expert_t*)mod->internal_state;
     if (!st) return CE_ERR_NOT_INITIALIZED;
+
+    ce_status_t vs = validate_recurrent_io(input, output);
+    if (vs != CE_OK) return vs;
 
     int B = (int)input->shape[0];
     int T = (int)input->shape[1];
@@ -592,6 +616,9 @@ ce_status_t ce_recurrent_expert_forward_routed(ce_module_t** experts,
                                                  ce_tensor_t* output,
                                                  int* assignments /* [B] */) {
     if (!experts || !input || !output || !assignments) return CE_ERR_INVALID_ARG;
+
+    ce_status_t vs = validate_recurrent_io(input, output);
+    if (vs != CE_OK) return vs;
 
     int B = (int)input->shape[0];
     int T = (int)input->shape[1];
