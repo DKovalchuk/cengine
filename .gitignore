@@ -1,0 +1,22 @@
+# ── Build artifacts ──
+build/
+*.o
+*.d
+*.so
+*.a
+
+# ── Python ──
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+
+# ── IDE / OS ──
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
