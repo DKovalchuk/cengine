@@ -128,4 +128,4 @@ cengine/
 
 ## Лицензия
 
-[MIT](LICENSE) © Dmitry
+[MIT](LICENSE)

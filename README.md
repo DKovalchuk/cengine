@@ -128,4 +128,4 @@ Early stage, under active hardening (see [pull requests](https://github.com/DKov
 
 ## License
 
-[MIT](LICENSE) © Dmitry
+[MIT](LICENSE)
