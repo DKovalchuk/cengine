@@ -64,7 +64,7 @@ test: $(TEST_BINS)
 	@echo "=== All tests passed ==="
 
 $(BUILDDIR)/tests/%: tests/%.c $(STATIC_LIB) | $(BUILDDIR)/tests
-	$(CC) $(CFLAGS) -I$(INCDIR) -o $@ $< -L$(LIBDIR) -lcengine -lm -lpthread
+	$(CC) $(CFLAGS) -I$(INCDIR) -o $@ $< $(STATIC_LIB) -lm -lpthread
 
 $(BUILDDIR)/tests:
 	mkdir -p $(BUILDDIR)/tests
