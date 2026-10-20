@@ -19,7 +19,7 @@ import pytest
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
 
-from python.bindings import lib, CeConfig, CeTensor, c_int64, c_float, c_bool, c_int, c_size_t, check
+from python.bindings import lib, CeConfig, CeTensor, CEngineError, c_int64, c_float, c_bool, c_int, c_size_t, check
 from python.module import RecurrentExpert, Sequential, Linear, ELU
 
 # Ensure C engine is initialized
@@ -80,7 +80,7 @@ class TestRecurrentForward:
         H = 16
         expert = RecurrentExpert(hidden_size=H, name="test_fwd")
 
-        B, T, F = 4, 8, 5
+        B, T, F = 4, 8, 6
         inp = _make_tensor_3d((B, T, F))
         # Fill with small random values
         for i in range(B * T * F):
@@ -98,7 +98,7 @@ class TestRecurrentForward:
         H = 8
         expert = RecurrentExpert(hidden_size=H, name="test_zero")
 
-        B, T, F = 2, 4, 5
+        B, T, F = 2, 4, 6
         inp = _make_tensor_3d((B, T, F))  # zeros
         out = _make_tensor_3d((B, T, 2))
         expert.forward(inp, out)
@@ -111,7 +111,7 @@ class TestRecurrentForward:
         H = 8
         expert = RecurrentExpert(hidden_size=H, name="test_det")
 
-        B, T, F = 2, 6, 5
+        B, T, F = 2, 6, 6
         np.random.seed(42)
         data = np.random.randn(B, T, F).astype(np.float32) * 0.1
 
@@ -136,19 +136,22 @@ class TestRecurrentForward:
         # 2-bit ADD: a=1 (01), b=1 (01) → result=10, carry sequence: 0,1
         # Bit 0: a=1, b=1, carry_in=0 → result=0, carry_out=1
         # Bit 1: a=0, b=0, carry_in=1 → result=1, carry_out=0
-        B, T, F = 1, 2, 5
+        B, T, F = 1, 2, 6
         inp = _make_tensor_3d((B, T, F))
+        # Layout: [a_bit, b_bit, carry_slot, op_1, op_2, op_3]
         inp.contents.data[0] = 1.0  # a_bit[0] = 1
         inp.contents.data[1] = 1.0  # b_bit[0] = 1
         inp.contents.data[2] = 0.0  # carry_in[0] = 0
         inp.contents.data[3] = 1.0  # op_1 = 1 (ADD)
         inp.contents.data[4] = 0.0  # op_2 = 0
+        inp.contents.data[5] = 0.0  # op_3 = 0
 
-        inp.contents.data[5] = 0.0  # a_bit[1] = 0
-        inp.contents.data[6] = 0.0  # b_bit[1] = 0
-        inp.contents.data[7] = 0.0  # carry_in[1] = 0 (will be set by network)
-        inp.contents.data[8] = 1.0  # op_1 = 1
-        inp.contents.data[9] = 0.0  # op_2 = 0
+        inp.contents.data[6] = 0.0   # a_bit[1] = 0
+        inp.contents.data[7] = 0.0   # b_bit[1] = 0
+        inp.contents.data[8] = 0.0   # carry_in[1] = 0 (set by network)
+        inp.contents.data[9] = 1.0   # op_1 = 1
+        inp.contents.data[10] = 0.0  # op_2 = 0
+        inp.contents.data[11] = 0.0  # op_3 = 0
 
         out = _make_tensor_3d((B, T, 2))
         expert.forward(inp, out)
@@ -168,7 +171,7 @@ class TestRecurrentBackward:
 
     def _compute_loss(self, expert, inp_data, B, T):
         """Forward pass and return sum of outputs as scalar loss."""
-        inp = _make_tensor_3d((B, T, 5), inp_data)
+        inp = _make_tensor_3d((B, T, 6), inp_data)
         out = _make_tensor_3d((B, T, 2))
         expert.forward(inp, out)
         loss = sum(out.contents.data[i] for i in range(out.contents.numel))
@@ -178,7 +181,7 @@ class TestRecurrentBackward:
         """Compute numerical gradient of loss w.r.t. input."""
         grad = np.zeros_like(inp_data)
         flat = grad.ravel()
-        for i in range(min(len(flat), B * T * 5)):
+        for i in range(min(len(flat), B * T * 6)):
             orig = inp_data.ravel()[i]
 
             inp_data.ravel()[i] = orig + eps
@@ -203,8 +206,8 @@ class TestRecurrentBackward:
         B, T = 1, 3
         expert = RecurrentExpert(hidden_size=H, name="test_grad")
 
-        inp = _make_tensor_3d((B, T, 5))
-        for i in range(B * T * 5):
+        inp = _make_tensor_3d((B, T, 6))
+        for i in range(B * T * 6):
             inp.contents.data[i] = np.random.randn() * 0.1
 
         out = _make_tensor_3d((B, T, 2))
@@ -214,7 +217,7 @@ class TestRecurrentBackward:
         for i in range(B * T * 2):
             grad_out.contents.data[i] = 1.0
 
-        grad_in = _make_tensor_3d((B, T, 5))
+        grad_in = _make_tensor_3d((B, T, 6))
         expert.backward(grad_out, grad_in)
 
         # C-engine zeros grad_input — this is the expected behavior
@@ -229,10 +232,10 @@ class TestRecurrentBackward:
         expert = RecurrentExpert(hidden_size=H, name="test_grad_p")
 
         np.random.seed(456)
-        inp_data = np.random.randn(B, T, 5).astype(np.float32) * 0.1
+        inp_data = np.random.randn(B, T, 6).astype(np.float32) * 0.1
 
         # Forward + backward
-        inp = _make_tensor_3d((B, T, 5), inp_data)
+        inp = _make_tensor_3d((B, T, 6), inp_data)
         out = _make_tensor_3d((B, T, 2))
         expert.forward(inp, out)
 
@@ -253,8 +256,8 @@ class TestRecurrentBackward:
         B, T = 2, 4
         expert = RecurrentExpert(hidden_size=H, name="test_novg")
 
-        inp = _make_tensor_3d((B, T, 5))
-        for i in range(B * T * 5):
+        inp = _make_tensor_3d((B, T, 6))
+        for i in range(B * T * 6):
             inp.contents.data[i] = np.random.randn() * 0.5
 
         out = _make_tensor_3d((B, T, 2))
@@ -289,8 +292,8 @@ class TestRecurrentActivations:
         B, T = 8, 10
         expert = RecurrentExpert(hidden_size=H, name="test_act")
 
-        inp = _make_tensor_3d((B, T, 5))
-        for i in range(B * T * 5):
+        inp = _make_tensor_3d((B, T, 6))
+        for i in range(B * T * 6):
             inp.contents.data[i] = np.random.randn() * 0.3
 
         out = _make_tensor_3d((B, T, 2))
@@ -307,8 +310,8 @@ class TestRecurrentActivations:
         B, T = 4, 8
         expert = RecurrentExpert(hidden_size=H, name="test_range")
 
-        inp = _make_tensor_3d((B, T, 5))
-        for i in range(B * T * 5):
+        inp = _make_tensor_3d((B, T, 6))
+        for i in range(B * T * 6):
             inp.contents.data[i] = np.random.randn() * 0.5
 
         out = _make_tensor_3d((B, T, 2))
@@ -341,8 +344,8 @@ class TestDebugLogging:
         B, T = 2, 3
         expert = RecurrentExpert(hidden_size=H, name="test_dbg")
 
-        inp = _make_tensor_3d((B, T, 5))
-        for i in range(B * T * 5):
+        inp = _make_tensor_3d((B, T, 6))
+        for i in range(B * T * 6):
             inp.contents.data[i] = np.random.randn() * 0.1
 
         out = _make_tensor_3d((B, T, 2))
@@ -354,6 +357,60 @@ class TestDebugLogging:
         # Disable debug logging
         cfg.enable_debug_logging = False
         check(lib.ce_configure(ctypes.byref(cfg)))
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# Test 5: Input shape validation (regression: OOB read on wrong width)
+# ══════════════════════════════════════════════════════════════════════════
+
+class TestShapeValidation:
+    """forward must reject tensors whose feature width != 6.
+
+    Regression test for an out-of-bounds read: the C layer hardcoded
+    stride 6 while callers passed F=5, reading uninitialized/foreign
+    memory (garbage outputs ~1e30).
+    """
+
+    def test_rejects_too_narrow_input(self):
+        """Input [B,T,5] must raise, not silently read past the buffer."""
+        expert = RecurrentExpert(hidden_size=8, name="test_shape5")
+        inp = _make_tensor_3d((2, 4, 5))
+        out = _make_tensor_3d((2, 4, 2))
+        with pytest.raises(CEngineError):
+            expert.forward(inp, out)
+
+    def test_rejects_too_wide_input(self):
+        """Input [B,T,7] must raise as well."""
+        expert = RecurrentExpert(hidden_size=8, name="test_shape7")
+        inp = _make_tensor_3d((2, 4, 7))
+        out = _make_tensor_3d((2, 4, 2))
+        with pytest.raises(CEngineError):
+            expert.forward(inp, out)
+
+    def test_rejects_non_3d_input(self):
+        """Input [B,F] (ndim=2) must raise."""
+        expert = RecurrentExpert(hidden_size=8, name="test_shape2d")
+        inp = lib.ce_tensor_zeros((c_int64 * 2)(4, 6), 2)
+        out = _make_tensor_3d((4, 1, 2))
+        with pytest.raises(CEngineError):
+            expert.forward(inp, out)
+
+    def test_accepts_width_6_and_is_deterministic(self):
+        """The supported width works and repeats bit-exactly."""
+        H, B, T, F = 8, 2, 6, 6
+        expert = RecurrentExpert(hidden_size=H, name="test_shape_ok")
+        np.random.seed(1000)
+        data = np.random.randn(B, T, F).astype(np.float32) * 0.1
+        outs = []
+        for _ in range(3):
+            inp = _make_tensor_3d((B, T, F), data)
+            out = _make_tensor_3d((B, T, 2))
+            expert.forward(inp, out)
+            outs.append(_tensor_to_numpy(out))
+        assert np.all(np.isfinite(outs[0])), f"Non-finite output: {outs[0]}"
+        for i in (1, 2):
+            assert np.allclose(outs[0], outs[i], atol=1e-6), \
+                f"Non-deterministic forward: max diff = {np.abs(outs[0] - outs[i]).max()}"
 
 
 if __name__ == "__main__":
