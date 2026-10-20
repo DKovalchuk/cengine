@@ -50,7 +50,7 @@ static ce_status_t cpu_matmul(const ce_tensor_t* a, const ce_tensor_t* b,
         /* B is stored as [N,K] (row-major). B^T is [K,N].
            To read B^T[k][j], we read B[j][k] = B[j*ldb + k] where ldb=K */
         N = (int)b->shape[0];
-        ldb = (int)b->shape[0]; /* leading dim of stored B */
+        ldb = (int)b->shape[1]; /* row stride of stored [N,K] is K */
     } else {
         N = (int)b->shape[1];
         ldb = (int)b->shape[1];
@@ -58,7 +58,12 @@ static ce_status_t cpu_matmul(const ce_tensor_t* a, const ce_tensor_t* b,
 
     ldc = N;
 
-    if (out->shape[0] != M || out->shape[1] != N) {
+    /* Inner dimensions must agree: the reduction over K indexes the larger
+     * of A/B along K — a mismatch reads past the smaller operand. */
+    int64_t b_inner = transpose_b ? b->shape[1] : b->shape[0];
+    if (a->ndim != 2 || b->ndim != 2 ||
+        b_inner != K ||
+        out->shape[0] != M || out->shape[1] != N) {
         return CE_ERR_INVALID_SHAPE;
     }
 
