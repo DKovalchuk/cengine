@@ -13,7 +13,7 @@ Quick start::
     )
 
     model = Sequential(
-        Linear(18, 128), ELU(),
+        Linear(19, 128), ELU(),
         Linear(128, 128), ELU(),
         Linear(128, 16), Sigmoid(),
     )

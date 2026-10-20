@@ -47,7 +47,7 @@ struct ce_trainer {
     ce_tensor_t* mask_tensor;     /* [batch_size, max_bits]  */
     ce_tensor_t* loss_grad_tensor;/* [batch_size, max_bits]  */
     int          max_bits;        /* final-stage max bits    */
-    int          input_dim;       /* 2 * max_bits + 2        */
+    int          input_dim;       /* 2 * max_bits + 3        */
 
     /* Run state */
     int   current_epoch;
@@ -125,7 +125,7 @@ static ce_status_t rebuild_dataloader(ce_trainer_t* t)
 /*
  * Prepare input / target / mask tensors from an ALU batch.
  *
- * Input layout per row:  [ a_bits(n) | b_bits(n) | op_code(2) ]
+ * Input layout per row:  [ a_bits(n) | b_bits(n) | op_code(3) ]
  * padded with zeros up to the model's full input_dim.
  *
  * The mask is 1.0 for bit positions [0, sample_n_bits) and 0.0 elsewhere,
@@ -252,7 +252,10 @@ static ce_status_t init_training(ce_trainer_t* t)
 
     /* ---- Working tensors (sized for the final curriculum stage) ---- */
     int max_bits  = t->curriculum->stages[t->curriculum->n_stages - 1].max_bits;
-    int input_dim = 2 * max_bits + 2;
+    /* op_code is a 3-float binary encoding (data.h: [3]) — reserving only
+     * 2 slots made prepare_batch write the third float past the row and,
+     * for the last row of a batch, past the input buffer (heap OOB write). */
+    int input_dim = 2 * max_bits + 3;
     int bs        = t->config.batch_size;
 
     int64_t in_shape[2]  = { bs, input_dim };
