@@ -9,7 +9,7 @@ It runs the training loop in a background thread so the caller retains control
 Usage::
 
     model = Sequential(
-        Linear(18, 128), ELU(),
+        Linear(19, 128), ELU(),
         Linear(128, 128), ELU(),
         Linear(128, 16), Sigmoid(),
     )
@@ -97,7 +97,7 @@ def _batch_to_tensors(
 ) -> tuple[POINTER(CeTensor), POINTER(CeTensor), int, POINTER(CeTensor)]:
     """Convert a C batch into (input, target, n_bits, mask).
 
-    Input layout per sample:  [a_bits(n), b_bits(n), op_code(2)]  → dim = 2n+2
+    Input layout per sample:  [a_bits(n), b_bits(n), op_code(3)]  → dim = 2n+3
     Target layout per sample: [result_bits(n), carry_bits(n)]     → dim = 2n
     Mask layout: same shape as target, 1.0 for valid bits, 0.0 for padding.
 
@@ -144,7 +144,9 @@ def _batch_to_tensors(
         return input_tensor, target_tensor, n_bits, mask_tensor
 
     # Flat layout (original)
-    input_dim = max(max_input_dim, 2 * n_bits + 2)
+    # op_code is a 3-float binary encoding — the row must reserve 3 slots,
+    # otherwise the copy below writes one float past the row (heap OOB write).
+    input_dim = max(max_input_dim, 2 * n_bits + 3)
     target_dim = max(max_target_dim, 2 * n_bits)
 
     # Allocate batch tensors (zero-initialised so shorter samples are padded)
@@ -168,7 +170,7 @@ def _batch_to_tensors(
         _copy_sample_data(input_tensor, sample.a_bits, row_offset)
         # b_bits → input[i, n_bits:n_bits+sn]
         _copy_sample_data(input_tensor, sample.b_bits, row_offset + n_bits)
-        # op_code → input[i, 2*n_bits:2*n_bits+2]
+        # op_code → input[i, 2*n_bits:2*n_bits+3]
         _copy_sample_data(input_tensor, sample.op_code, row_offset + 2 * n_bits)
 
         tgt_offset = i * target_dim

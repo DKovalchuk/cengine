@@ -7,7 +7,7 @@ passes execute entirely in C; Python owns the lifecycle and parameter bookkeepin
 Usage::
 
     model = Sequential(
-        Linear(18, 128),
+        Linear(19, 128),
         ELU(),
         Linear(128, 128),
         ELU(),
