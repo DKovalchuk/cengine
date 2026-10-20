@@ -15,6 +15,7 @@
 #include "tensor.h"
 #include "layers.h"
 #include "trainer.h"
+#include "../src/training/trainer_internal.h"
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
@@ -110,11 +111,115 @@ static void test_trainer_op_code_layout(void) {
     PASS();
 }
 
+/* ---- Test: batch layout must follow the FINAL stage, not the current ----
+ *
+ * Tensors are allocated once for the final curriculum stage
+ * (final=16 → input_dim = 2*16+3 = 35), but run_single_epoch used to pass
+ * the CURRENT stage max (e.g. 8) as the layout anchor. With a narrower
+ * current stage, b_bits/op_code land in the wrong columns and target/mask
+ * rows are written with a too-small stride, overlapping each other.
+ */
+static void test_prepare_batch_final_anchor(void) {
+    TEST("prepare: layout anchored to final stage");
+    const int final_bits = 16;
+    const int input_dim  = 2 * final_bits + 3;   /* 35 */
+
+    float a0[] = {1,0,1,0};
+    float b0[] = {0,1,0,1};
+    float o0[] = {1,1,0};
+    float r0[] = {1,0,1,1};
+    float a1[] = {1,1,1,1,0,0,0,0};
+    float b1[] = {1,0,1,0,1,0,1,0};
+    float r1[] = {0,1,1,0,1,0,0,1};
+
+    ce_alu_sample_t s0, s1;
+    memset(&s0, 0, sizeof s0);
+    memset(&s1, 0, sizeof s1);
+    int64_t sh4[1] = {4}, sh8[1] = {8}, sh3[1] = {3};
+
+    s0.a_bits      = ce_tensor_create_from_data(a0, sh4, 1);
+    s0.b_bits      = ce_tensor_create_from_data(b0, sh4, 1);
+    s0.op_code     = ce_tensor_create_from_data(o0, sh3, 1);
+    s0.result_bits = ce_tensor_create_from_data(r0, sh4, 1);
+    s0.n_bits      = 4;
+
+    s1.a_bits      = ce_tensor_create_from_data(a1, sh8, 1);
+    s1.b_bits      = ce_tensor_create_from_data(b1, sh8, 1);
+    s1.op_code     = ce_tensor_create_from_data(o0, sh3, 1);
+    s1.result_bits = ce_tensor_create_from_data(r1, sh8, 1);
+    s1.n_bits      = 8;
+
+    ce_alu_sample_t* samples[2] = {&s0, &s1};
+    ce_batch_t batch;
+    memset(&batch, 0, sizeof batch);
+    batch.samples  = samples;
+    batch.count    = 2;
+    batch.capacity = 2;
+
+    int64_t in_sh[2]  = {2, input_dim};
+    int64_t tgt_sh[2] = {2, final_bits};
+    ce_tensor_t* input  = ce_tensor_zeros(in_sh, 2);
+    ce_tensor_t* target = ce_tensor_zeros(tgt_sh, 2);
+    ce_tensor_t* mask   = ce_tensor_zeros(tgt_sh, 2);
+    ASSERT(input && target && mask, "tensor alloc failed");
+
+    ce_trainer_prepare_batch(&batch, input, target, mask, input_dim);
+
+    /* Row 0 (nb=4): a at [0,4), zero pad to final, b at [16,20), op at [32,35) */
+    for (int j = 0; j < 4; j++) {
+        ASSERT(input->data[j] == a0[j], "row0 a_bits misplaced");
+        ASSERT(input->data[final_bits + j] == b0[j],
+               "row0 b_bits not at final-stage offset");
+    }
+    for (int j = 4; j < final_bits; j++)
+        ASSERT(input->data[j] == 0.0f,
+               "row0 a-padding not zeroed (b_bits leaked into a-block)");
+    for (int j = 0; j < 3; j++)
+        ASSERT(input->data[2 * final_bits + j] == o0[j],
+               "row0 op_code not at 2*final offset");
+
+    /* Row 1 (nb=8): same layout shifted by input_dim */
+    const int base1 = input_dim;
+    for (int j = 0; j < 8; j++) {
+        ASSERT(input->data[base1 + j] == a1[j], "row1 a_bits misplaced");
+        ASSERT(input->data[base1 + final_bits + j] == b1[j],
+               "row1 b_bits not at final-stage offset");
+    }
+    for (int j = 8; j < final_bits; j++)
+        ASSERT(input->data[base1 + j] == 0.0f,
+               "row1 a-padding not zeroed (b_bits leaked into a-block)");
+    for (int j = 0; j < 3; j++)
+        ASSERT(input->data[base1 + 2 * final_bits + j] == o0[j],
+               "row1 op_code not at 2*final offset");
+
+    /* Target rows stride = final: row1 starts at final_bits, not nb/current */
+    for (int j = 0; j < 4; j++)
+        ASSERT(target->data[j] == r0[j], "target row0 result misplaced");
+    for (int j = 4; j < final_bits; j++)
+        ASSERT(target->data[j] == 0.0f, "target row0 padding not zeroed");
+    for (int j = 0; j < 8; j++)
+        ASSERT(target->data[final_bits + j] == r1[j],
+               "target row1 not at final-stage stride");
+
+    /* Mask rows follow the same stride */
+    for (int j = 0; j < 4; j++)
+        ASSERT(mask->data[j] == 1.0f, "mask row0 valid bits");
+    for (int j = 4; j < final_bits; j++)
+        ASSERT(mask->data[j] == 0.0f, "mask row0 padding");
+    for (int j = 0; j < 8; j++)
+        ASSERT(mask->data[final_bits + j] == 1.0f,
+               "mask row1 not at final-stage stride");
+
+    /* Sample tensors live for the duration of the test (process exits after). */
+    PASS();
+}
+
 int main(void) {
     printf("\n=== CEngine Trainer Tests ===\n\n");
     ce_init();
 
     test_trainer_op_code_layout();
+    test_prepare_batch_final_anchor();
 
     ce_shutdown();
     printf("\n=== Results: %d/%d passed ===\n\n", tests_passed, tests_run);
