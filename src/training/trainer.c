@@ -6,6 +6,7 @@
  * Data preparation is ALU-specific (concatenates a_bits, b_bits, op_code).
  */
 #include "trainer.h"
+#include "trainer_internal.h"
 #include "memory.h"
 #include <stdlib.h>
 #include <string.h>
@@ -131,9 +132,9 @@ static ce_status_t rebuild_dataloader(ce_trainer_t* t)
  * The mask is 1.0 for bit positions [0, sample_n_bits) and 0.0 elsewhere,
  * so BCE loss ignores padded positions.
  */
-static void prepare_batch(const ce_batch_t* batch, int max_bits,
-                          ce_tensor_t* input, ce_tensor_t* target,
-                          ce_tensor_t* mask, int input_dim)
+void ce_trainer_prepare_batch(const ce_batch_t* batch, int max_bits,
+                              ce_tensor_t* input, ce_tensor_t* target,
+                              ce_tensor_t* mask, int input_dim)
 {
     int bs = batch->count;
 
@@ -307,7 +308,7 @@ static ce_status_t run_single_epoch(ce_trainer_t* t)
         }
 
         /* ---- Prepare tensors ---- */
-        prepare_batch(batch, max_bits,
+        ce_trainer_prepare_batch(batch, max_bits,
                       t->input_tensor, t->target_tensor, t->mask_tensor,
                       t->input_dim);
 
