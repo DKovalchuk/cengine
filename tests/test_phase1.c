@@ -3,6 +3,7 @@
 #include "tensor.h"
 #include "compute.h"
 #include "simd.h"
+#include "layers.h"
 #include <stdio.h>
 #include <math.h>
 #include <string.h>
@@ -173,6 +174,134 @@ static void test_matmul(void) {
     PASS();
 }
 
+/* ---- Test: matmul with transposed B (regression: wrong ldb) ----
+ * cpu_matmul's CE_TRANSPOSE_B branch must use the stored row stride
+ * K = b->shape[1] (B is stored [N,K]), not b->shape[0].
+ */
+static void test_matmul_transpose_b_inbounds(void) {
+    TEST("matmul transpose_b (N<K, wrong ldb)");
+    /* A[2,4], B stored [N=2,K=4]: C = A @ B^T = [2,2] */
+    float a_data[] = {1,2,3,4, 5,6,7,8};
+    float b_data[] = {1,0,1,0, 0,1,0,1};
+
+    int64_t a_shape[] = {2, 4};
+    int64_t b_shape[] = {2, 4};
+    int64_t c_shape[] = {2, 2};
+
+    ce_tensor_t* A = ce_tensor_create_from_data(a_data, a_shape, 2);
+    ce_tensor_t* B = ce_tensor_create_from_data(b_data, b_shape, 2);
+    ce_tensor_t* C = ce_tensor_zeros(c_shape, 2);
+
+    ce_status_t st = ce_matmul(A, B, C, CE_TRANSPOSE_B);
+    ASSERT(st == CE_OK, "matmul transpose_b failed");
+
+    /* C[i][j] = dot(A[i], B[j]) */
+    ASSERT_NEAR(ce_tensor_get(C, (int64_t[]){0, 0}),  4.0f, 1e-4f, "C[0,0]");
+    ASSERT_NEAR(ce_tensor_get(C, (int64_t[]){0, 1}),  6.0f, 1e-4f, "C[0,1]");
+    ASSERT_NEAR(ce_tensor_get(C, (int64_t[]){1, 0}), 12.0f, 1e-4f, "C[1,0]");
+    ASSERT_NEAR(ce_tensor_get(C, (int64_t[]){1, 1}), 14.0f, 1e-4f, "C[1,1]");
+
+    ce_tensor_release(A);
+    ce_tensor_release(B);
+    ce_tensor_release(C);
+    PASS();
+}
+
+static void test_matmul_transpose_b_oob(void) {
+    TEST("matmul transpose_b (N>K, OOB read)");
+    /* A[2,3], B stored [N=4,K=3]. With ldb=N the last row read at
+     * j=3 lands at flat[3*4+k] = 12..14, past the 12-float buffer. */
+    float a_data[] = {1,2,3, 4,5,6};
+    float b_data[] = {1,0,0, 0,1,0, 0,0,1, 1,1,1};
+
+    int64_t a_shape[] = {2, 3};
+    int64_t b_shape[] = {4, 3};
+    int64_t c_shape[] = {2, 4};
+
+    ce_tensor_t* A = ce_tensor_create_from_data(a_data, a_shape, 2);
+    ce_tensor_t* B = ce_tensor_create_from_data(b_data, b_shape, 2);
+    ce_tensor_t* C = ce_tensor_zeros(c_shape, 2);
+
+    ce_status_t st = ce_matmul(A, B, C, CE_TRANSPOSE_B);
+    ASSERT(st == CE_OK, "matmul transpose_b failed");
+
+    ASSERT_NEAR(ce_tensor_get(C, (int64_t[]){0, 0}),  1.0f, 1e-4f, "C[0,0]");
+    ASSERT_NEAR(ce_tensor_get(C, (int64_t[]){0, 1}),  2.0f, 1e-4f, "C[0,1]");
+    ASSERT_NEAR(ce_tensor_get(C, (int64_t[]){0, 2}),  3.0f, 1e-4f, "C[0,2]");
+    ASSERT_NEAR(ce_tensor_get(C, (int64_t[]){0, 3}),  6.0f, 1e-4f, "C[0,3]");
+    ASSERT_NEAR(ce_tensor_get(C, (int64_t[]){1, 0}),  4.0f, 1e-4f, "C[1,0]");
+    ASSERT_NEAR(ce_tensor_get(C, (int64_t[]){1, 1}),  5.0f, 1e-4f, "C[1,1]");
+    ASSERT_NEAR(ce_tensor_get(C, (int64_t[]){1, 2}),  6.0f, 1e-4f, "C[1,2]");
+    ASSERT_NEAR(ce_tensor_get(C, (int64_t[]){1, 3}), 15.0f, 1e-4f, "C[1,3]");
+
+    ce_tensor_release(A);
+    ce_tensor_release(B);
+    ce_tensor_release(C);
+    PASS();
+}
+
+static void test_matmul_inner_dim_mismatch(void) {
+    TEST("matmul inner dim mismatch rejected");
+    /* A[2,3] but B stored [N=2,K_b=4]: B^T is [4,3], inner dims
+     * (A's K=3 vs B's K_b=4) disagree → must be rejected, not read OOB. */
+    float a_data[] = {1,2,3, 4,5,6};
+    float b_data[] = {1,0,0,0, 0,1,0,0};
+
+    int64_t a_shape[] = {2, 3};
+    int64_t b_shape[] = {2, 4};
+    int64_t c_shape[] = {2, 2};
+
+    ce_tensor_t* A = ce_tensor_create_from_data(a_data, a_shape, 2);
+    ce_tensor_t* B = ce_tensor_create_from_data(b_data, b_shape, 2);
+    ce_tensor_t* C = ce_tensor_zeros(c_shape, 2);
+
+    ce_status_t st = ce_matmul(A, B, C, CE_TRANSPOSE_B);
+    ASSERT(st == CE_ERR_INVALID_SHAPE, "expected INVALID_SHAPE for inner dim mismatch");
+
+    ce_tensor_release(A);
+    ce_tensor_release(B);
+    ce_tensor_release(C);
+    PASS();
+}
+
+/* ---- Test: Linear forward with rectangular weight (real transpose_b caller) ---- */
+static void test_linear_forward_rectangular(void) {
+    TEST("linear forward (rectangular weight)");
+    ce_module_t* lin = ce_linear_create(3, 2, "lin_rect");
+    ASSERT(lin != NULL, "linear create failed");
+
+    ce_tensor_t* w = ce_module_get_parameter(lin, 0);
+    ce_tensor_t* bias = ce_module_get_parameter(lin, 1);
+    ASSERT(w != NULL && bias != NULL, "parameter fetch failed");
+
+    /* Deterministic weights: W[out=2, in=3] row-major */
+    w->data[0] = 1.0f; w->data[1] = 2.0f; w->data[2] = 3.0f;
+    w->data[3] = 4.0f; w->data[4] = 5.0f; w->data[5] = 6.0f;
+    bias->data[0] = 0.1f;
+    bias->data[1] = -0.2f;
+
+    float in_data[] = {1.0f, 2.0f, 3.0f};
+    int64_t in_shape[] = {1, 3};
+    int64_t out_shape[] = {1, 2};
+    ce_tensor_t* IN = ce_tensor_create_from_data(in_data, in_shape, 2);
+    ce_tensor_t* OUT = ce_tensor_zeros(out_shape, 2);
+
+    ce_status_t st = ce_linear_forward(lin, IN, OUT);
+    ASSERT(st == CE_OK, "linear forward failed");
+
+    /* out[o] = sum_k in[k] * W[o*in + k] + bias[o] */
+    for (int o = 0; o < 2; o++) {
+        float ref = bias->data[o];
+        for (int k = 0; k < 3; k++) ref += in_data[k] * w->data[o * 3 + k];
+        ASSERT_NEAR(OUT->data[o], ref, 1e-4f, "linear out");
+    }
+
+    ce_tensor_release(IN);
+    ce_tensor_release(OUT);
+    /* Module intentionally not destroyed: test process exits right after. */
+    PASS();
+}
+
 /* ---- Test: activations ---- */
 static void test_activations(void) {
     TEST("activations (sigmoid, tanh, elu, relu)");
@@ -295,6 +424,10 @@ int main(void) {
     test_tensor_lifecycle();
     test_tensor_ops();
     test_matmul();
+    test_matmul_transpose_b_inbounds();
+    test_matmul_transpose_b_oob();
+    test_matmul_inner_dim_mismatch();
+    test_linear_forward_rectangular();
     test_activations();
     test_reductions();
     test_softmax();
