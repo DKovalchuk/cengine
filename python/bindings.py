@@ -1083,6 +1083,9 @@ lib.ce_dataloader_next.restype = POINTER(CeBatch)
 lib.ce_dataloader_reset.argtypes = [POINTER(CeDataloader)]
 lib.ce_dataloader_reset.restype = None
 
+lib.ce_dataloader_reseed.argtypes = [POINTER(CeDataloader), c_int64, POINTER(c_int), c_int]
+lib.ce_dataloader_reseed.restype = c_int
+
 lib.ce_dataloader_destroy.argtypes = [POINTER(CeDataloader)]
 lib.ce_dataloader_destroy.restype = None
 

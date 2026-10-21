@@ -524,16 +524,23 @@ class CEngineTrainer:
                 lib.ce_collector_start_epoch(self._collector, epoch)
 
                 # ── Reseed generator for data shuffling each epoch ───────────
-                if hasattr(self._generator, 'contents'):
-                    self._generator.contents.rng_state = cfg.seed + epoch
-
-                # ── Curriculum: stage-based operation filtering ─────────────
-                if cfg.use_curriculum and hasattr(self._generator, 'contents') and hasattr(model, '_curriculum_ops'):
-                    allowed = model._curriculum_ops
-                    gen = self._generator.contents
-                    gen.n_ops = len(allowed)
-                    for _oi, _op in enumerate(sorted(allowed)):
-                        gen.ops[_oi] = _op
+                # The generator is shared with the dataloader's prefetch
+                # worker, which reads it in ce_alu_gen_batch() — mutating
+                # rng_state/n_ops/ops directly was a data race.  Route every
+                # reconfiguration through ce_dataloader_reseed(), which joins
+                # the worker, applies the new seed/op filter, discards
+                # batches generated under the old settings and restarts
+                # prefetch, so the batch fetched below uses the new settings.
+                ops_ptr = None
+                n_ops = 0
+                if cfg.use_curriculum and hasattr(model, '_curriculum_ops'):
+                    allowed = sorted(model._curriculum_ops)
+                    if len(allowed) > 0:
+                        n_ops = len(allowed)
+                        ops_ptr = (c_int * n_ops)(*allowed)
+                if self._dataloader is not None:
+                    check(lib.ce_dataloader_reseed(
+                        self._dataloader, cfg.seed + epoch, ops_ptr, n_ops))
 
                 # ── Data generation ────────────────────────────────────────
                 lib.ce_collector_start_data_gen(self._collector)
