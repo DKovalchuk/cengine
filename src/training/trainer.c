@@ -338,9 +338,10 @@ static ce_status_t run_single_epoch(ce_trainer_t* t)
                 t->output_tensor, t->target_tensor,
                 t->mask_tensor, t->loss_grad_tensor);
         } else {
-            loss = ce_mse_loss(t->output_tensor, t->target_tensor);
-            ce_mse_backward(
-                t->output_tensor, t->target_tensor, t->loss_grad_tensor);
+            loss = ce_mse_loss(t->output_tensor, t->target_tensor,
+                               t->mask_tensor);
+            ce_mse_backward(t->output_tensor, t->target_tensor,
+                            t->mask_tensor, t->loss_grad_tensor);
         }
 
         total_loss += (double)loss;

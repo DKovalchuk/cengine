@@ -641,7 +641,9 @@ class CEngineTrainer:
                         output_tensor, target_tensor, mask_tensor,
                     )
                 else:
-                    loss_val = lib.ce_mse_loss(output_tensor, target_tensor)
+                    loss_val = lib.ce_mse_loss(
+                        output_tensor, target_tensor, mask_tensor,
+                    )
 
                 # ── Router auxiliary loss (balance + z-loss) ──────────────
                 # Adds regularisation pressure that keeps logits bounded
@@ -687,7 +689,7 @@ class CEngineTrainer:
                     ))
                 else:
                     check(lib.ce_mse_backward(
-                        output_tensor, target_tensor, grad_tensor,
+                        output_tensor, target_tensor, mask_tensor, grad_tensor,
                     ))
 
                 # Allocate grad_input with correct shape
