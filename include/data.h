@@ -107,6 +107,22 @@ ce_batch_t*      ce_dataloader_next(ce_dataloader_t* dl);
 void             ce_dataloader_reset(ce_dataloader_t* dl);
 void             ce_dataloader_destroy(ce_dataloader_t* dl);
 
+/*
+ * Reconfigure the generator safely with respect to the prefetch worker.
+ *
+ * The prefetch thread reads dl->generator concurrently, so the generator
+ * must not be mutated from outside while it may be running: this call
+ * joins the in-flight worker, applies `seed` (zero-guard + warm-up, same
+ * as ce_alu_gen_create) and, when ops != NULL, replaces the op filter,
+ * discards batches generated under the previous settings, and restarts
+ * prefetch.  After it returns, the batch from the next ce_dataloader_next()
+ * is guaranteed to come from the new configuration.
+ *
+ * Returns CE_ERR_INVALID_ARG for NULL dl / invalid op filter.
+ */
+ce_status_t ce_dataloader_reseed(ce_dataloader_t* dl, int64_t seed,
+                                 const int* ops, int n_ops);
+
 /* ---- Bit helpers (exposed for testing) ---- */
 void  ce_bits_le(uint64_t value, int n_bits, float* out);
 void  ce_compute_add_carry(uint64_t a, uint64_t b, int n_bits, float* out);
