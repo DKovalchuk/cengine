@@ -214,12 +214,126 @@ static void test_prepare_batch_final_anchor(void) {
     PASS();
 }
 
+/* ---- Test: an epoch with zero processed batches must not fabricate loss ----
+ *
+ * run_single_epoch() used to compute avg_loss = 0.0f when actual_b == 0
+ * (stop requested before the first batch, or samples_per_epoch <
+ * batch_size leaving zero batches per epoch) and feed it everywhere:
+ *   - ce_curriculum_update(0.0): 0.0 < loss_threshold counted as a
+ *     "good" epoch, and with patience it advanced the stage with no
+ *     training at all;
+ *   - t->current_loss: clobbered the last real loss with a fake 0.0;
+ *   - on_epoch_end / checkpoint: reported a perfect loss.
+ * An epoch that processed no batches carries no signal — all three must
+ * be skipped.
+ */
+static int g_cb_calls = 0;
+static void count_epoch_cb(int epoch, float loss, void* user_data) {
+    (void)epoch; (void)loss; (void)user_data;
+    g_cb_calls++;
+}
+
+static void test_empty_epoch_no_fake_loss_or_advance(void) {
+    TEST("empty epoch: no fake loss 0.0, no curriculum advance");
+
+    ce_module_t* probe = make_probe_module();
+    ASSERT(probe != NULL, "probe module create");
+
+    ce_trainer_config_t cfg;
+    memset(&cfg, 0, sizeof cfg);
+    cfg.model               = probe;
+    cfg.loss_type           = CE_LOSS_BCE;
+    cfg.optimizer_type      = CE_OPT_ADAM;
+    cfg.learning_rate       = 1e-3f;
+    cfg.total_epochs        = 5;
+    cfg.batch_size          = 4;
+    cfg.samples_per_epoch   = 8;      /* → 2 batches per epoch */
+    cfg.seed                = 42;
+    cfg.max_bits            = 8;
+    cfg.loss_threshold      = 0.5f;   /* probe loss ≈ ln2 ≈ 0.693 → "bad" */
+    cfg.patience            = 1;      /* one fake 0.0 would advance */
+    cfg.max_epochs_per_stage = 100;
+    cfg.on_epoch_end        = count_epoch_cb;
+    cfg.user_data           = NULL;
+
+    g_cb_calls = 0;
+
+    ce_trainer_t* t = ce_trainer_create(&cfg);
+    ASSERT(t != NULL, "trainer create");
+
+    /* Epoch 1: real batches → real loss, curriculum sees it. */
+    ce_status_t st = ce_trainer_step(t);
+    ASSERT(st == CE_OK, "first step failed");
+    float real_loss = ce_trainer_current_loss(t);
+    ASSERT(real_loss > 0.5f, "first epoch should report a real (non-zero) loss");
+    ASSERT(ce_trainer_curriculum_stage(t) == 0,
+           "real loss above threshold must not advance the stage");
+    ASSERT(g_cb_calls == 1, "callback should fire for the real epoch");
+
+    /* Epoch 2: stop before any batch → zero processed batches. */
+    st = ce_trainer_stop(t);
+    ASSERT(st == CE_OK, "stop failed");
+    st = ce_trainer_step(t);
+    ASSERT(st == CE_OK, "second step failed");
+
+    ASSERT(ce_trainer_curriculum_stage(t) == 0,
+           "empty epoch must not advance the curriculum stage");
+    ASSERT(ce_trainer_current_loss(t) == real_loss,
+           "empty epoch must not clobber the last real loss with 0.0");
+    ASSERT(g_cb_calls == 1,
+           "callback must not fire for an epoch that processed no batches");
+
+    ce_trainer_destroy(t);
+    ce_module_destroy(probe);
+    PASS();
+}
+
+/* ---- Test: config with zero batches per epoch must be rejected ----
+ *
+ * samples_per_epoch < batch_size makes batches_per_epoch = 0, so every
+ * epoch processes nothing — the trainer can only spin through
+ * total_epochs fabricating losses (the root cause guarded above).  Such
+ * a config is rejected at creation instead.
+ */
+static void test_create_rejects_sub_batch_epoch(void) {
+    TEST("create rejects samples_per_epoch < batch_size");
+
+    ce_module_t* probe = make_probe_module();
+    ASSERT(probe != NULL, "probe module create");
+
+    ce_trainer_config_t cfg;
+    memset(&cfg, 0, sizeof cfg);
+    cfg.model              = probe;
+    cfg.loss_type          = CE_LOSS_BCE;
+    cfg.optimizer_type     = CE_OPT_ADAM;
+    cfg.learning_rate      = 1e-3f;
+    cfg.total_epochs       = 1;
+    cfg.batch_size         = 8;
+    cfg.samples_per_epoch  = 4;   /* 4 < 8 → zero batches per epoch */
+    cfg.seed               = 42;
+    cfg.max_bits           = 8;
+    cfg.loss_threshold     = 0.5f;
+    cfg.patience           = 1;
+    cfg.max_epochs_per_stage = 100;
+
+    ce_trainer_t* t = ce_trainer_create(&cfg);
+    ASSERT(t == NULL,
+           "samples_per_epoch < batch_size yields zero batches per epoch "
+           "and must be rejected");
+
+    if (t) ce_trainer_destroy(t);
+    ce_module_destroy(probe);
+    PASS();
+}
+
 int main(void) {
     printf("\n=== CEngine Trainer Tests ===\n\n");
     ce_init();
 
     test_trainer_op_code_layout();
     test_prepare_batch_final_anchor();
+    test_empty_epoch_no_fake_loss_or_advance();
+    test_create_rejects_sub_batch_epoch();
 
     ce_shutdown();
     printf("\n=== Results: %d/%d passed ===\n\n", tests_passed, tests_run);
