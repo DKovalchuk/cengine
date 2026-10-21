@@ -6,6 +6,7 @@
  * Data preparation is ALU-specific (concatenates a_bits, b_bits, op_code).
  */
 #include "trainer.h"
+#include "trainer_internal.h"
 #include "memory.h"
 #include <stdlib.h>
 #include <string.h>
@@ -125,17 +126,25 @@ static ce_status_t rebuild_dataloader(ce_trainer_t* t)
 /*
  * Prepare input / target / mask tensors from an ALU batch.
  *
- * Input layout per row:  [ a_bits(n) | b_bits(n) | op_code(3) ]
- * padded with zeros up to the model's full input_dim.
+ * Input layout per row, anchored to the FINAL curriculum stage:
+ *   [ a_bits(final) | b_bits(final) | op_code(3) ]
+ * zero-padded up to input_dim, where final = (input_dim - 3) / 2.
+ * target/mask rows use the same final stride.
+ *
+ * The anchor must be input_dim (the model's contract, allocated once for
+ * the final stage) — not the current stage's max_bits: with a narrower
+ * current stage, b_bits/op_code landed in the wrong columns and
+ * target/mask rows overlapped, silently corrupting training data.
  *
  * The mask is 1.0 for bit positions [0, sample_n_bits) and 0.0 elsewhere,
  * so BCE loss ignores padded positions.
  */
-static void prepare_batch(const ce_batch_t* batch, int max_bits,
-                          ce_tensor_t* input, ce_tensor_t* target,
-                          ce_tensor_t* mask, int input_dim)
+void ce_trainer_prepare_batch(const ce_batch_t* batch,
+                              ce_tensor_t* input, ce_tensor_t* target,
+                              ce_tensor_t* mask, int input_dim)
 {
     int bs = batch->count;
+    const int final = (input_dim - 3) / 2;
 
     ce_tensor_zero(input);
     ce_tensor_zero(target);
@@ -144,18 +153,18 @@ static void prepare_batch(const ce_batch_t* batch, int max_bits,
     for (int i = 0; i < bs; i++) {
         ce_alu_sample_t* s = batch->samples[i];
         int nb = s->n_bits;
-        if (nb > max_bits) nb = max_bits;
+        if (nb > final) nb = final;
 
         float* in_row  = &input->data[i * input_dim];
-        float* tgt_row = &target->data[i * max_bits];
-        float* msk_row = &mask->data[i * max_bits];
+        float* tgt_row = &target->data[i * final];
+        float* msk_row = &mask->data[i * final];
 
         /* a_bits */
         memcpy(in_row, s->a_bits->data, (size_t)nb * sizeof(float));
         /* b_bits */
-        memcpy(in_row + max_bits, s->b_bits->data, (size_t)nb * sizeof(float));
+        memcpy(in_row + final, s->b_bits->data, (size_t)nb * sizeof(float));
         /* op_code (always 3 floats) */
-        memcpy(in_row + 2 * max_bits, s->op_code->data, 3 * sizeof(float));
+        memcpy(in_row + 2 * final, s->op_code->data, 3 * sizeof(float));
 
         /* target result_bits */
         memcpy(tgt_row, s->result_bits->data, (size_t)nb * sizeof(float));
@@ -286,7 +295,6 @@ static ce_status_t init_training(ce_trainer_t* t)
 static ce_status_t run_single_epoch(ce_trainer_t* t)
 {
     int epoch = t->current_epoch;
-    int max_bits = t->curriculum->stages[t->curriculum->current_stage].max_bits;
     int batches_per_epoch = t->config.samples_per_epoch / t->config.batch_size;
 
     if (t->collector) ce_collector_start_epoch(t->collector, epoch);
@@ -307,7 +315,7 @@ static ce_status_t run_single_epoch(ce_trainer_t* t)
         }
 
         /* ---- Prepare tensors ---- */
-        prepare_batch(batch, max_bits,
+        ce_trainer_prepare_batch(batch,
                       t->input_tensor, t->target_tensor, t->mask_tensor,
                       t->input_dim);
 
