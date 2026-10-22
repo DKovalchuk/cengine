@@ -690,7 +690,12 @@ class CEngineTrainer:
 
                 # NaN check on loss
                 if loss_val != loss_val:  # NaN check
-                    print(f"  NaN loss at epoch {epoch}, skipping rest of epoch")
+                    print(f"  NaN loss at epoch {epoch} — stopping training")
+                    # Close the epoch's telemetry pair (start_epoch ran at
+                    # the top of the loop): the break below exits the whole
+                    # run, so without this the started epoch would silently
+                    # vanish from every consumer.
+                    lib.ce_collector_end_epoch(self._collector)
                     lib.ce_tensor_release(input_tensor)
                     lib.ce_tensor_release(target_tensor)
                     lib.ce_tensor_release(mask_tensor)
@@ -746,6 +751,10 @@ class CEngineTrainer:
                     # NaN check on gradients
                     if grad_norm != grad_norm:  # NaN check
                         print(f"  WARNING: NaN gradient at epoch {epoch}, skipping step")
+                        # Close the epoch pair before skipping: start_epoch
+                        # ran at the top of the loop, and the continue below
+                        # bypasses the normal end_epoch.
+                        lib.ce_collector_end_epoch(self._collector)
                         lib.ce_tensor_release(input_tensor)
                         lib.ce_tensor_release(target_tensor)
                         lib.ce_tensor_release(mask_tensor)
