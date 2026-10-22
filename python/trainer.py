@@ -97,11 +97,21 @@ def _batch_to_tensors(
 ) -> tuple[POINTER(CeTensor), POINTER(CeTensor), int, POINTER(CeTensor)]:
     """Convert a C batch into (input, target, n_bits, mask).
 
-    Input layout per sample:  [a_bits(n), b_bits(n), op_code(3)]  → dim = 2n+3
-    Target layout per sample: [result_bits(n), carry_bits(n)]     → dim = 2n
-    Mask layout: same shape as target, 1.0 for valid bits, 0.0 for padding.
+    When ``max_input_dim`` / ``max_target_dim`` (the model's widths) are
+    given, rows are model-anchored exactly like C's
+    ``ce_trainer_prepare_batch``:
 
-    Handles variable n_bits across samples by padding shorter samples with zeros.
+        input  = [a_bits(0..n), b_bits(anchor..anchor+n),
+                  op_code(2*anchor..+3)]   anchor = (max_input_dim-3)//2
+        target = [result(0..n), carry(t_anchor..t_anchor+n)]
+                                        t_anchor = max_target_dim//2
+
+    Without model dims the legacy batch anchor is kept: anchor = n_bits
+    (max over the batch), dim = 2n+3 (input) / 2n (target).
+
+    Mask is 1.0 at valid result/carry positions (model-anchored when the
+    model dims are known), 0.0 at padding.  Variable n_bits across samples
+    is handled by zero-padding shorter samples.
     """
     batch = batch_ptr.contents
     n_samples = batch.count
@@ -143,11 +153,31 @@ def _batch_to_tensors(
 
         return input_tensor, target_tensor, n_bits, mask_tensor
 
-    # Flat layout (original)
+    # Flat layout — rows are anchored on the MODEL's dimensions when known,
+    # mirroring ce_trainer_prepare_batch in C (final = (input_dim - 3) / 2):
+    #   input  = [a(0..n), b(anchor..anchor+n), op_code(2*anchor..+3)]
+    #   target = [result(0..n), carry(t_anchor..t_anchor+n)]
+    # Anchoring on the BATCH's max n_bits (previous behaviour) shifted
+    # b/op/carry/mask into columns the model reads as different features
+    # whenever the batch was narrower than the model — op_code landed in
+    # the b_bits columns, loss compared result slots against carry.
     # op_code is a 3-float binary encoding — the row must reserve 3 slots,
     # otherwise the copy below writes one float past the row (heap OOB write).
-    input_dim = max(max_input_dim, 2 * n_bits + 3)
-    target_dim = max(max_target_dim, 2 * n_bits)
+    if max_input_dim > 0 and max_input_dim >= 2 * n_bits + 3:
+        input_dim = max_input_dim
+        in_anchor = (max_input_dim - 3) // 2
+    else:
+        # No usable model dims (or the model is narrower than this batch —
+        # that mismatch is reported loudly by the C matmul): fall back to
+        # the legacy batch-n_bits anchor.
+        input_dim = 2 * n_bits + 3
+        in_anchor = n_bits
+    if max_target_dim > 0 and max_target_dim >= 2 * n_bits:
+        target_dim = max_target_dim
+        tgt_anchor = max_target_dim // 2
+    else:
+        target_dim = 2 * n_bits
+        tgt_anchor = n_bits
 
     # Allocate batch tensors (zero-initialised so shorter samples are padded)
     in_shape = (c_int64 * 2)(n_samples, input_dim)
@@ -168,21 +198,21 @@ def _batch_to_tensors(
 
         # a_bits → input[i, 0:sn]
         _copy_sample_data(input_tensor, sample.a_bits, row_offset)
-        # b_bits → input[i, n_bits:n_bits+sn]
-        _copy_sample_data(input_tensor, sample.b_bits, row_offset + n_bits)
-        # op_code → input[i, 2*n_bits:2*n_bits+3]
-        _copy_sample_data(input_tensor, sample.op_code, row_offset + 2 * n_bits)
+        # b_bits → input[i, anchor:anchor+sn]
+        _copy_sample_data(input_tensor, sample.b_bits, row_offset + in_anchor)
+        # op_code → input[i, 2*anchor:2*anchor+3]
+        _copy_sample_data(input_tensor, sample.op_code, row_offset + 2 * in_anchor)
 
         tgt_offset = i * target_dim
         # result_bits → target[i, 0:sn]
         _copy_sample_data(target_tensor, sample.result_bits, tgt_offset)
-        # carry_bits → target[i, n_bits:n_bits+sn]
-        _copy_sample_data(target_tensor, sample.carry_bits, tgt_offset + n_bits)
+        # carry_bits → target[i, t_anchor:t_anchor+sn]
+        _copy_sample_data(target_tensor, sample.carry_bits, tgt_offset + tgt_anchor)
 
-        # mask = 1.0 for valid positions
+        # mask = 1.0 for valid positions (result and carry, model-anchored)
         for t in range(sn):
             mask_tensor.contents.data[i * target_dim + t] = 1.0
-            mask_tensor.contents.data[i * target_dim + n_bits + t] = 1.0
+            mask_tensor.contents.data[i * target_dim + tgt_anchor + t] = 1.0
 
     return input_tensor, target_tensor, n_bits, mask_tensor
 
