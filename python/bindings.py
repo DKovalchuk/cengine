@@ -872,6 +872,9 @@ lib.ce_sequential_forward.restype = c_int
 lib.ce_sequential_backward.argtypes = [POINTER(CeModule), POINTER(CeTensor), POINTER(CeTensor)]
 lib.ce_sequential_backward.restype = c_int
 
+lib.ce_sequential_destroy.argtypes = [POINTER(CeModule)]
+lib.ce_sequential_destroy.restype = None
+
 # ---- recurrent.h ----
 lib.ce_recurrent_expert_create.argtypes = [c_int, c_char_p]
 lib.ce_recurrent_expert_create.restype = POINTER(CeModule)
