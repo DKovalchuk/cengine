@@ -202,6 +202,17 @@ static ce_status_t init_training(ce_trainer_t* t)
         return CE_ERR_NOT_INITIALIZED;
     }
 
+    /* A model without backward() cannot be trained: run_single_epoch
+     * calls model->backward() unconditionally, which segfaulted for
+     * modules that never set it (kan_recurrent: "backward not
+     * implemented yet — will be done via Python").  Sequential children
+     * are guarded in ce_sequential_backward; this covers the top-level
+     * module. */
+    if (!t->config.model->backward) {
+        fprintf(stderr, "ce_trainer: model has no backward()\n");
+        return CE_ERR_NOT_INITIALIZED;
+    }
+
     /* ---- Optimizer ---- */
     if (t->config.optimizer_type == CE_OPT_ADAM) {
         t->adam = ce_adam_create(
