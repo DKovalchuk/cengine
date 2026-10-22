@@ -328,18 +328,20 @@ ce_status_t ce_kan_layer_backward_batch(ce_module_t* mod,
                     my_c[base * 4 + k] += g_j * w_s[base] * b_ik[k];
             }
 
-            /* grad_input[i] += sum_j g[j] * (w_b[j,i]*d_silu[i] + w_s[j,i]*sum_k c[j,i,k]*d_basis[k]) */
+            /* grad_input[i] += sum_j g[j] * (w_b[j,i]*d_silu[i] + w_s[j,i]*sum_k c[j,i,k]*d_basis[k])
+             * — the upstream g[j] must weight every output's contribution
+             * (chain rule), as it already does for g_w_b/g_w_s/g_c. */
             if (g_in) {
                 float d_spline = 0.0f;
+                float d_base = 0.0f;
                 for (int j = 0; j < out_f; j++) {
+                    float g_j = g_n[j];
                     float dwsc = 0.0f;
                     for (int k = 0; k < 4; k++)
                         dwsc += c_data[(j*in_f+i)*4+k] * d_b[k];
-                    d_spline += w_s[j*in_f+i] * dwsc;
+                    d_spline += g_j * w_s[j*in_f+i] * dwsc;
+                    d_base += g_j * w_b[j*in_f+i] * ds_i;
                 }
-                float d_base = 0.0f;
-                for (int j = 0; j < out_f; j++)
-                    d_base += w_b[j*in_f+i] * ds_i;
 
                 #pragma omp atomic
                 g_in[n * in_f + i] += (d_base + d_spline) * 2.0f;
