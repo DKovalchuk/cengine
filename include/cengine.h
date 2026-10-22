@@ -26,6 +26,7 @@ typedef enum {
     CE_ERR_OVERFLOW,
     CE_ERR_THREAD,
     CE_ERR_NOT_INITIALIZED,
+    CE_ERR_NOT_IMPLEMENTED,
 } ce_status_t;
 
 const char* ce_status_str(ce_status_t status);

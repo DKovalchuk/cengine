@@ -2,6 +2,7 @@
  *           records ops during forward, replay in reverse for backward */
 #include "autograd.h"
 #include "memory.h"
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -104,6 +105,21 @@ ce_status_t ce_tape_record(ce_tape_t* tape,
 ce_status_t ce_tape_backward(ce_tape_t* tape, ce_tensor_t* loss_grad) {
     if (!tape) return CE_ERR_INVALID_ARG;
     if (tape->length == 0) return CE_OK;
+
+    /* Refuse multi-entry chains loudly.  Only the last entry ever had a
+     * seeded gradient — earlier entries keep grad == NULL from record()
+     * and were silently skipped — and layer tape-backwards do not
+     * compute grad_input at all (linear accumulates parameter grads
+     * only), so a "successful" replay returned partial gradients.
+     * The production path (model->backward) is unaffected; nothing
+     * in-tree called the tape backward. */
+    if (tape->length > 1) {
+        fprintf(stderr,
+                "ce_tape_backward: %d-entry tape chains are not supported "
+                "(only the last entry's op could run); use "
+                "model->backward() instead\n", tape->length);
+        return CE_ERR_NOT_IMPLEMENTED;
+    }
 
     /* Seed the last entry's gradient */
     tape_entry_t* last = &tape->entries[tape->length - 1];
