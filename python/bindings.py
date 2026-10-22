@@ -959,10 +959,12 @@ lib.ce_bce_with_logits_backward.argtypes = [
 ]
 lib.ce_bce_with_logits_backward.restype = c_int
 
-lib.ce_mse_loss.argtypes = [POINTER(CeTensor), POINTER(CeTensor)]
+lib.ce_mse_loss.argtypes = [POINTER(CeTensor), POINTER(CeTensor), POINTER(CeTensor)]
 lib.ce_mse_loss.restype = c_float
 
-lib.ce_mse_backward.argtypes = [POINTER(CeTensor), POINTER(CeTensor), POINTER(CeTensor)]
+lib.ce_mse_backward.argtypes = [
+    POINTER(CeTensor), POINTER(CeTensor), POINTER(CeTensor), POINTER(CeTensor),
+]
 lib.ce_mse_backward.restype = c_int
 
 # ---- memory.h ----
@@ -1082,6 +1084,9 @@ lib.ce_dataloader_next.restype = POINTER(CeBatch)
 
 lib.ce_dataloader_reset.argtypes = [POINTER(CeDataloader)]
 lib.ce_dataloader_reset.restype = None
+
+lib.ce_dataloader_reseed.argtypes = [POINTER(CeDataloader), c_int64, POINTER(c_int), c_int]
+lib.ce_dataloader_reseed.restype = c_int
 
 lib.ce_dataloader_destroy.argtypes = [POINTER(CeDataloader)]
 lib.ce_dataloader_destroy.restype = None

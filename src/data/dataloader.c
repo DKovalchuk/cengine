@@ -161,6 +161,57 @@ void ce_dataloader_reset(ce_dataloader_t* dl) {
     start_prefetch(dl, 0);
 }
 
+/* Join an in-flight prefetch worker, if any.  The consumer thread is the
+ * only caller of this (next/reset/destroy/reseed all run on it), so
+ * thread_active needs no atomic treatment. */
+static void join_prefetch_if_active(ce_dataloader_t* dl) {
+    if (dl->thread_active) {
+        pthread_join(dl->prefetch_thread, NULL);
+        dl->thread_active = false;
+    }
+}
+
+ce_status_t ce_dataloader_reseed(ce_dataloader_t* dl, int64_t seed,
+                                 const int* ops, int n_ops) {
+    if (!dl || !dl->generator) return CE_ERR_INVALID_ARG;
+    if (ops) {
+        if (n_ops < 1 || n_ops > CE_NUM_OPS) return CE_ERR_INVALID_ARG;
+        for (int i = 0; i < n_ops; i++) {
+            if (ops[i] < 0 || ops[i] >= CE_NUM_OPS) return CE_ERR_INVALID_ARG;
+        }
+    }
+
+    /* Wait for the worker before touching the generator it reads. */
+    join_prefetch_if_active(dl);
+
+    /* Discard batches generated under the previous settings so the next
+     * ce_dataloader_next() reflects the new configuration. */
+    for (int i = 0; i < 2; i++) {
+        if (dl->prefetch_buffer[i]) {
+            ce_batch_destroy(dl->prefetch_buffer[i]);
+            dl->prefetch_buffer[i] = NULL;
+        }
+    }
+    atomic_store(&dl->ready_buffer, -1);
+
+    if (ops) {
+        memcpy(dl->generator->ops, ops, (size_t)n_ops * sizeof(int));
+        dl->generator->n_ops = n_ops;
+    }
+
+    /* Re-seed the PRNG — avoid zero state (mirrors ce_alu_gen_create). */
+    dl->generator->rng_state = (uint64_t)seed;
+    if (dl->generator->rng_state == 0) {
+        dl->generator->rng_state = 0x123456789ABCDEF0ULL;
+    }
+    for (int i = 0; i < 8; i++) {
+        ce_xorshift64(&dl->generator->rng_state);
+    }
+
+    start_prefetch(dl, 0);
+    return CE_OK;
+}
+
 void ce_dataloader_destroy(ce_dataloader_t* dl) {
     if (!dl) return;
 

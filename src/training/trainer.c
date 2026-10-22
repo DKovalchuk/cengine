@@ -338,9 +338,10 @@ static ce_status_t run_single_epoch(ce_trainer_t* t)
                 t->output_tensor, t->target_tensor,
                 t->mask_tensor, t->loss_grad_tensor);
         } else {
-            loss = ce_mse_loss(t->output_tensor, t->target_tensor);
-            ce_mse_backward(
-                t->output_tensor, t->target_tensor, t->loss_grad_tensor);
+            loss = ce_mse_loss(t->output_tensor, t->target_tensor,
+                               t->mask_tensor);
+            ce_mse_backward(t->output_tensor, t->target_tensor,
+                            t->mask_tensor, t->loss_grad_tensor);
         }
 
         total_loss += (double)loss;
@@ -394,38 +395,46 @@ static ce_status_t run_single_epoch(ce_trainer_t* t)
     }
 
     /* ---- End-of-epoch bookkeeping ---- */
-    float avg_loss = (actual_b > 0)
-        ? (float)(total_loss / (double)actual_b) : 0.0f;
-    t->current_loss = avg_loss;
-
     if (t->collector) ce_collector_end_epoch(t->collector);
 
     /* Temperature annealing */
     t->current_temperature = compute_temperature(t);
 
-    /* Curriculum update — may advance to next stage */
-    int advanced = ce_curriculum_update(t->curriculum, avg_loss);
-    if (advanced) {
-        ce_status_t st = rebuild_dataloader(t);
-        if (st != CE_OK) return st;
-        if (t->collector) {
-            ce_collector_record_curriculum(
-                t->collector, t->curriculum->current_stage);
+    /* An epoch that processed no batches (stop requested before the first
+     * batch, or the dataloader returned nothing) carries no loss signal.
+     * Feeding a fabricated avg_loss = 0.0 into ce_curriculum_update()
+     * counted as a "good" epoch — 0.0 is below any positive threshold —
+     * advancing stages without any training; it also clobbered the last
+     * real loss in current_loss and reported a fake perfect loss to the
+     * checkpoint and the user callback.  Skip all of it. */
+    if (actual_b > 0) {
+        float avg_loss = (float)(total_loss / (double)actual_b);
+        t->current_loss = avg_loss;
+
+        /* Curriculum update — may advance to next stage */
+        int advanced = ce_curriculum_update(t->curriculum, avg_loss);
+        if (advanced) {
+            ce_status_t st = rebuild_dataloader(t);
+            if (st != CE_OK) return st;
+            if (t->collector) {
+                ce_collector_record_curriculum(
+                    t->collector, t->curriculum->current_stage);
+            }
         }
-    }
 
-    /* Periodic checkpoint */
-    if (t->config.checkpoint_dir && t->config.checkpoint_dir[0] &&
-        t->config.save_every_n_epochs > 0 &&
-        (epoch + 1) % t->config.save_every_n_epochs == 0)
-    {
-        ce_checkpoint_save(t->config.checkpoint_dir, epoch, avg_loss,
-                           t->config.model, NULL);
-    }
+        /* Periodic checkpoint */
+        if (t->config.checkpoint_dir && t->config.checkpoint_dir[0] &&
+            t->config.save_every_n_epochs > 0 &&
+            (epoch + 1) % t->config.save_every_n_epochs == 0)
+        {
+            ce_checkpoint_save(t->config.checkpoint_dir, epoch, avg_loss,
+                               t->config.model, NULL);
+        }
 
-    /* User callback */
-    if (t->config.on_epoch_end) {
-        t->config.on_epoch_end(epoch, avg_loss, t->config.user_data);
+        /* User callback */
+        if (t->config.on_epoch_end) {
+            t->config.on_epoch_end(epoch, avg_loss, t->config.user_data);
+        }
     }
 
     t->current_epoch = epoch + 1;
@@ -441,6 +450,10 @@ ce_trainer_t* ce_trainer_create(const ce_trainer_config_t* config)
     if (!config || !config->model) return NULL;
     if (config->batch_size <= 0 || config->samples_per_epoch <= 0) return NULL;
     if (config->total_epochs <= 0) return NULL;
+    /* samples_per_epoch < batch_size yields zero batches per epoch: every
+     * epoch would process nothing (see run_single_epoch's empty-epoch
+     * guard), so reject the config instead of spinning through epochs. */
+    if (config->samples_per_epoch < config->batch_size) return NULL;
 
     ce_trainer_t* t = calloc(1, sizeof(*t));
     if (!t) return NULL;
@@ -496,6 +509,17 @@ ce_status_t ce_trainer_stop(ce_trainer_t* t)
 ce_ring_buffer_t* ce_trainer_get_telemetry(ce_trainer_t* t)
 {
     return t ? t->ring : NULL;
+}
+
+int ce_trainer_curriculum_stage(const ce_trainer_t* t)
+{
+    if (!t || !t->curriculum) return -1;
+    return t->curriculum->current_stage;
+}
+
+float ce_trainer_current_loss(const ce_trainer_t* t)
+{
+    return t ? t->current_loss : -1.0f;
 }
 
 ce_status_t ce_trainer_destroy(ce_trainer_t* t)
