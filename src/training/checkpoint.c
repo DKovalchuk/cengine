@@ -111,7 +111,14 @@ ce_status_t ce_checkpoint_save(const char* dir, int epoch, float loss,
     char path[512];
     snprintf(path, sizeof(path), "%s/checkpoint_epoch_%d.bin", dir, epoch);
 
-    FILE* f = fopen(path, "wb");
+    /* Atomic save: write into a hidden temp file in the SAME directory
+     * and rename() it into place.  Writing the final path directly let a
+     * failed or interrupted write leave a truncated file there — "latest"
+     * and the highest-epoch scan would then load garbage. */
+    char tmp[560];
+    snprintf(tmp, sizeof(tmp), "%s/.checkpoint_epoch_%d.tmp", dir, epoch);
+
+    FILE* f = fopen(tmp, "wb");
     if (!f) return CE_ERR_IO;
 
     int n_params = ce_module_param_count(model);
@@ -130,7 +137,18 @@ ce_status_t ce_checkpoint_save(const char* dir, int epoch, float loss,
         if (write_param(f, p)) goto write_fail;
     }
 
-    fclose(f);
+    /* Surface deferred stdio errors before committing the rename. */
+    int flush_rc = fflush(f);
+    int close_rc = fclose(f);
+    f = NULL;
+    if (flush_rc != 0 || close_rc != 0) {
+        unlink(tmp);
+        return CE_ERR_IO;
+    }
+    if (rename(tmp, path) != 0) {
+        unlink(tmp);
+        return CE_ERR_IO;
+    }
 
     /* Also write to "latest" for easy loading */
     char latest[512];
@@ -156,7 +174,8 @@ ce_status_t ce_checkpoint_save(const char* dir, int epoch, float loss,
     return CE_OK;
 
 write_fail:
-    fclose(f);
+    if (f) fclose(f);
+    unlink(tmp);
     return CE_ERR_IO;
 }
 
