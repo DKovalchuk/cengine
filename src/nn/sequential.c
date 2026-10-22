@@ -1,8 +1,35 @@
 /* sequential.c — Sequential container: chains layers in order */
 #include "layers.h"
 #include "autograd.h"
+#include "kan_layer.h"
 #include <stdlib.h>
 #include <string.h>
+
+/* Children that change the last dimension expose their widths through
+ * their layer struct.  The intermediate/gradient buffer must follow
+ * those widths: keyed only on ce_linear_forward, a KAN child mid-chain
+ * got an input-sized buffer and its forward wrote out_features values
+ * per row past the end (heap OOB write whenever out > in). */
+static bool child_widths(const ce_module_t* layer, int* in_f, int* out_f) {
+    if (!layer->internal_state) return false;
+    if (layer->forward == ce_linear_forward) {
+        const ce_linear_t* lin = (const ce_linear_t*)layer->internal_state;
+        if (lin->in_features > 0 && lin->out_features > 0) {
+            *in_f = lin->in_features;
+            *out_f = lin->out_features;
+            return true;
+        }
+    } else if (layer->forward == ce_kan_layer_forward) {
+        const ce_kan_layer_t* k =
+            (const ce_kan_layer_t*)layer->internal_state;
+        if (k->in_features > 0 && k->out_features > 0) {
+            *in_f = k->in_features;
+            *out_f = k->out_features;
+            return true;
+        }
+    }
+    return false;
+}
 
 static void sequential_zero_grad(ce_module_t* mod) {
     if (!mod || !mod->internal_state) return;
@@ -78,21 +105,15 @@ ce_status_t ce_sequential_forward(ce_module_t* seq_mod,
             /* Last layer writes directly to output */
             st = layer->forward(layer, current, output);
         } else {
-            /* Allocate intermediate buffer.
-               For layers that change dimensionality (Linear), we need
-               the output shape.  Use a heuristic: if the layer name
-               contains "linear" and has internal_state, try to read
-               out_features from ce_linear_t.  Otherwise use same shape. */
+            /* Allocate intermediate buffer with the layer's OUTPUT
+             * width when it changes dimensionality. */
             int64_t inter_shape[CE_MAX_DIMS];
             int inter_ndim = current->ndim;
             memcpy(inter_shape, current->shape, sizeof(int64_t) * (size_t)current->ndim);
 
-            /* Safe heuristic: check if this layer's forward is ce_linear_forward */
-            if (layer->internal_state && layer->forward == ce_linear_forward) {
-                ce_linear_t* lin = (ce_linear_t*)layer->internal_state;
-                if (lin->out_features > 0 && lin->in_features > 0) {
-                    inter_shape[inter_ndim - 1] = lin->out_features;
-                }
+            int child_in = 0, child_out = 0;
+            if (child_widths(layer, &child_in, &child_out)) {
+                inter_shape[inter_ndim - 1] = child_out;
             }
 
             ce_tensor_t* inter = ce_tensor_create(
@@ -134,17 +155,15 @@ ce_status_t ce_sequential_backward(ce_module_t* seq_mod,
         ce_module_t* layer = seq->children[i];
         if (!layer || !layer->backward) return CE_ERR_NOT_INITIALIZED;
 
-        /* Allocate intermediate gradient buffer with correct shape */
+        /* Intermediate gradient buffer follows the layer's INPUT width */
         int64_t gi_shape[CE_MAX_DIMS];
         int gi_ndim = current_grad->ndim;
         memcpy(gi_shape, current_grad->shape,
                sizeof(int64_t) * (size_t)current_grad->ndim);
 
-        if (layer->internal_state && layer->forward == ce_linear_forward) {
-            ce_linear_t* lin = (ce_linear_t*)layer->internal_state;
-            if (lin->in_features > 0) {
-                gi_shape[gi_ndim - 1] = lin->in_features;
-            }
+        int child_in = 0, child_out = 0;
+        if (child_widths(layer, &child_in, &child_out)) {
+            gi_shape[gi_ndim - 1] = child_in;
         }
 
         ce_tensor_t* gi = ce_tensor_create(

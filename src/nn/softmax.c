@@ -8,6 +8,13 @@ typedef struct {
     float temperature;       /* 0.0 for standard softmax */
 } softmax_state_t;
 
+/* Release the reference taken at record() before freeing the state. */
+static void softmax_state_free(void* state) {
+    softmax_state_t* s = (softmax_state_t*)state;
+    if (s->output_ref) ce_tensor_release(s->output_ref);
+    free(s);
+}
+
 /* Layer state for the production (non-tape) path — mirrors sigmoid:
  * forward caches its output, backward needs it for the JVP. */
 typedef struct {
@@ -107,7 +114,8 @@ ce_status_t ce_softmax_forward(ce_module_t* mod,
             ce_tensor_retain(output);
             ss->output_ref  = output;
             ss->temperature = state->temperature;
-            ce_tape_record(tape, output, softmax_tape_backward, ss, 1);
+            ce_tape_record(tape, output, softmax_tape_backward, ss, 1,
+                           softmax_state_free);
         }
     }
     return CE_OK;

@@ -15,6 +15,18 @@ typedef struct {
     ce_tensor_t* grad_b;
 } linear_backward_state_t;
 
+/* Release the references taken at record() before freeing the state —
+ * the tape owns the state and cannot know its layout. */
+static void linear_state_free(void* state) {
+    linear_backward_state_t* s = (linear_backward_state_t*)state;
+    if (s->input_cache) ce_tensor_release(s->input_cache);
+    if (s->weight)      ce_tensor_release(s->weight);
+    if (s->bias)        ce_tensor_release(s->bias);
+    if (s->grad_w)      ce_tensor_release(s->grad_w);
+    if (s->grad_b)      ce_tensor_release(s->grad_b);
+    free(s);
+}
+
 /* Backward function registered with the tape */
 static void linear_tape_backward(void* state, ce_tensor_t* grad_output) {
     linear_backward_state_t* s = (linear_backward_state_t*)state;
@@ -161,7 +173,8 @@ ce_status_t ce_linear_forward(ce_module_t* mod,
             bs->bias        = lin->bias;
             bs->grad_w      = lin->grad_w;
             bs->grad_b      = lin->grad_b;
-            ce_tape_record(tape, output, linear_tape_backward, bs, 1);
+            ce_tape_record(tape, output, linear_tape_backward, bs, 1,
+                           linear_state_free);
         }
     }
 

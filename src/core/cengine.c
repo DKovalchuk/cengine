@@ -20,6 +20,7 @@ const char* ce_status_str(ce_status_t status) {
         case CE_ERR_OVERFLOW:       return "Overflow";
         case CE_ERR_THREAD:         return "Thread error";
         case CE_ERR_NOT_INITIALIZED:return "Not initialized";
+        case CE_ERR_NOT_IMPLEMENTED:return "Not implemented";
         default:                    return "Unknown error";
     }
 }

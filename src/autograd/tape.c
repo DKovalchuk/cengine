@@ -2,6 +2,7 @@
  *           records ops during forward, replay in reverse for backward */
 #include "autograd.h"
 #include "memory.h"
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -39,7 +40,10 @@ void ce_tape_destroy(ce_tape_t* tape) {
         tape_entry_t* e = &tape->entries[i];
         if (e->output) ce_tensor_release(e->output);
         if (e->grad)   ce_tensor_release(e->grad);
-        if (e->state)  free(e->state);
+        if (e->state) {
+            if (e->state_free) e->state_free(e->state);
+            else free(e->state);
+        }
     }
     free(tape->entries);
     free(tape);
@@ -55,7 +59,10 @@ ce_status_t ce_tape_start(ce_tape_t* tape) {
         tape_entry_t* e = &tape->entries[i];
         if (e->output) ce_tensor_release(e->output);
         if (e->grad)   ce_tensor_release(e->grad);
-        if (e->state)  free(e->state);
+        if (e->state) {
+            if (e->state_free) e->state_free(e->state);
+            else free(e->state);
+        }
         memset(e, 0, sizeof(tape_entry_t));
     }
     tape->length = 0;
@@ -72,7 +79,8 @@ ce_status_t ce_tape_stop(ce_tape_t* tape) {
 ce_status_t ce_tape_record(ce_tape_t* tape,
                             ce_tensor_t* output,
                             void (*backward_fn)(void*, ce_tensor_t*),
-                            void* state, int n_inputs) {
+                            void* state, int n_inputs,
+                            void (*state_free)(void*)) {
     if (!tape || !output || !backward_fn) return CE_ERR_INVALID_ARG;
     if (!tape->recording) return CE_ERR_NOT_INITIALIZED;
 
@@ -94,6 +102,7 @@ ce_status_t ce_tape_record(ce_tape_t* tape,
     entry->grad        = NULL;
     entry->backward_fn = backward_fn;
     entry->state       = state;
+    entry->state_free  = state_free;
     entry->n_inputs    = n_inputs;
 
     return CE_OK;
@@ -104,6 +113,21 @@ ce_status_t ce_tape_record(ce_tape_t* tape,
 ce_status_t ce_tape_backward(ce_tape_t* tape, ce_tensor_t* loss_grad) {
     if (!tape) return CE_ERR_INVALID_ARG;
     if (tape->length == 0) return CE_OK;
+
+    /* Refuse multi-entry chains loudly.  Only the last entry ever had a
+     * seeded gradient — earlier entries keep grad == NULL from record()
+     * and were silently skipped — and layer tape-backwards do not
+     * compute grad_input at all (linear accumulates parameter grads
+     * only), so a "successful" replay returned partial gradients.
+     * The production path (model->backward) is unaffected; nothing
+     * in-tree called the tape backward. */
+    if (tape->length > 1) {
+        fprintf(stderr,
+                "ce_tape_backward: %d-entry tape chains are not supported "
+                "(only the last entry's op could run); use "
+                "model->backward() instead\n", tape->length);
+        return CE_ERR_NOT_IMPLEMENTED;
+    }
 
     /* Seed the last entry's gradient */
     tape_entry_t* last = &tape->entries[tape->length - 1];

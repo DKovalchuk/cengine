@@ -11,6 +11,12 @@ typedef struct {
     ce_tensor_t* output_ref;
 } sigmoid_state_t;
 
+static void sigmoid_state_free(void* state) {
+    sigmoid_state_t* s = (sigmoid_state_t*)state;
+    if (s->output_ref) ce_tensor_release(s->output_ref);
+    free(s);
+}
+
 static void sigmoid_tape_backward(void* state, ce_tensor_t* grad_output) {
     sigmoid_state_t* s = (sigmoid_state_t*)state;
     if (!s || !grad_output || !s->output_ref) return;
@@ -48,7 +54,8 @@ ce_status_t ce_sigmoid_forward(ce_module_t* mod,
         if (ss) {
             ce_tensor_retain(state->output_cache);
             ss->output_ref = state->output_cache;
-            ce_tape_record(tape, output, sigmoid_tape_backward, ss, 1);
+            ce_tape_record(tape, output, sigmoid_tape_backward, ss, 1,
+                           sigmoid_state_free);
         }
     }
     return CE_OK;
