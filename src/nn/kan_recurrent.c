@@ -101,8 +101,7 @@ static void kan_forward_1d(
     /* Compute basis and SiLU */
     for (int i = 0; i < in_f; i++) {
         poly_basis_4(x[i], basis_out + i * 4);
-        float sig = ce_sigmoid_scalar(-x[i]); /* sigmoid(-x) for numerically stable SiLU */
-        silu_out[i] = x[i] * sig;
+        silu_out[i] = x[i] * ce_sigmoid_scalar(x[i]); /* SiLU: x * sigmoid(x) */
     }
 
     /* Output: y[j] = sum_i (w_b[j,i]*silu[i] + w_s[j,i]*spline[i]) + bias[j] */
@@ -132,8 +131,7 @@ static void kan_forward_1d_avx2(
         __m256 xv = _mm256_loadu_ps(x + i);
         __m256 x2 = _mm256_mul_ps(xv, xv);
         __m256 x3 = _mm256_mul_ps(x2, xv);
-        __m256 neg_x = _mm256_sub_ps(_mm256_setzero_ps(), xv);
-        __m256 sig = avx2_sigmoid_ps(neg_x);
+        __m256 sig = avx2_sigmoid_ps(xv);
         __m256 sily = _mm256_mul_ps(xv, sig);
         _mm256_storeu_ps(silu_out + i, sily);
         /* Store basis */
@@ -147,7 +145,7 @@ static void kan_forward_1d_avx2(
 #endif
     for (; i < in_f; i++) {
         poly_basis_4(x[i], basis_out + i * 4);
-        silu_out[i] = x[i] * ce_sigmoid_scalar(-x[i]);
+        silu_out[i] = x[i] * ce_sigmoid_scalar(x[i]);
     }
 
     /* Output */
