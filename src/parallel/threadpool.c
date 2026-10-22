@@ -52,6 +52,20 @@ static void queue_push(task_queue_t* q, ce_task_t task) {
     pthread_mutex_unlock(&q->lock);
 }
 
+/* Set the shutdown flag and wake every worker ATOMICALLY with respect to
+ * queue_pop's predicate read: both happen under queue->lock.  Setting the
+ * flag and broadcasting outside the lock let a worker evaluate
+ * `!*shutdown`, then sleep through the broadcast — a lost wakeup that
+ * hung destroy()'s pthread_join — and made the flag write itself an
+ * unsynchronised data race (TSan: queue_pop vs destroy). */
+static void queue_set_shutdown(task_queue_t* q, bool* flag)
+{
+    pthread_mutex_lock(&q->lock);
+    *flag = true;
+    pthread_cond_broadcast(&q->not_empty);
+    pthread_mutex_unlock(&q->lock);
+}
+
 /* Returns 1 on success, 0 if shutdown was requested and queue is empty */
 static int queue_pop(task_queue_t* q, ce_task_t* out, bool* shutdown) {
     pthread_mutex_lock(&q->lock);
@@ -146,8 +160,7 @@ ce_threadpool_t* ce_threadpool_create(int num_workers) {
         rc = pthread_create(&pool->workers[i], NULL, worker_func, pool);
         if (rc) {
             /* Roll back: signal shutdown, join already-created threads */
-            pool->shutdown = true;
-            pthread_cond_broadcast(&pool->queue.not_empty);
+            queue_set_shutdown(&pool->queue, &pool->shutdown);
             for (int j = 0; j < i; j++) {
                 pthread_join(pool->workers[j], NULL);
             }
@@ -194,9 +207,8 @@ ce_status_t ce_threadpool_wait_all(ce_threadpool_t* pool) {
 void ce_threadpool_destroy(ce_threadpool_t* pool) {
     if (!pool) return;
 
-    /* Signal shutdown */
-    pool->shutdown = true;
-    pthread_cond_broadcast(&pool->queue.not_empty);
+    /* Signal shutdown under the queue lock (see queue_set_shutdown) */
+    queue_set_shutdown(&pool->queue, &pool->shutdown);
 
     for (int i = 0; i < pool->num_workers; i++) {
         pthread_join(pool->workers[i], NULL);
