@@ -14,6 +14,7 @@
 #include "memory.h"
 #include "tensor.h"
 #include "layers.h"
+#include "kan_recurrent.h"
 #include "trainer.h"
 #include "../src/training/trainer_internal.h"
 #include <stdio.h>
@@ -326,6 +327,49 @@ static void test_create_rejects_sub_batch_epoch(void) {
     PASS();
 }
 
+/* ---- Test: a model without backward must fail fast, not segfault ----
+ *
+ * kan_recurrent never sets mod->backward ("will be done via Python"),
+ * and run_single_epoch() called model->backward(...) unconditionally —
+ * training such a model crashed with SIGSEGV (major C2).  init_training
+ * must reject it with a status code instead.
+ */
+static void test_trainer_rejects_model_without_backward(void) {
+    TEST("trainer rejects model without backward");
+
+    ce_module_t* kr = ce_kan_recurrent_create(8, "kr_no_backward");
+    ASSERT(kr != NULL, "kan_recurrent create");
+    ASSERT(kr->backward == NULL,
+           "precondition: kan_recurrent has no backward");
+
+    ce_trainer_config_t cfg;
+    memset(&cfg, 0, sizeof cfg);
+    cfg.model               = kr;
+    cfg.loss_type           = CE_LOSS_BCE;
+    cfg.optimizer_type      = CE_OPT_ADAM;
+    cfg.learning_rate       = 1e-3f;
+    cfg.total_epochs        = 1;
+    cfg.batch_size          = 4;
+    cfg.samples_per_epoch   = 8;
+    cfg.seed                = 42;
+    cfg.max_bits            = 8;
+    cfg.loss_threshold      = 0.5f;
+    cfg.patience            = 1;
+    cfg.max_epochs_per_stage = 100;
+
+    ce_trainer_t* t = ce_trainer_create(&cfg);
+    ASSERT(t != NULL, "trainer create");
+
+    ce_status_t st = ce_trainer_step(t);
+    ASSERT(st == CE_ERR_NOT_INITIALIZED,
+           "step on a backward-less model must return "
+           "CE_ERR_NOT_INITIALIZED (used to segfault)");
+
+    ce_trainer_destroy(t);
+    ce_module_destroy(kr);
+    PASS();
+}
+
 int main(void) {
     printf("\n=== CEngine Trainer Tests ===\n\n");
     ce_init();
@@ -334,6 +378,7 @@ int main(void) {
     test_prepare_batch_final_anchor();
     test_empty_epoch_no_fake_loss_or_advance();
     test_create_rejects_sub_batch_epoch();
+    test_trainer_rejects_model_without_backward();
 
     ce_shutdown();
     printf("\n=== Results: %d/%d passed ===\n\n", tests_passed, tests_run);
