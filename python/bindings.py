@@ -1046,6 +1046,9 @@ lib.ce_compute_grad.restype = c_int
 lib.ce_alu_gen_create.argtypes = [c_int, c_int, POINTER(c_int), c_int, c_int64]
 lib.ce_alu_gen_create.restype = POINTER(CeAluGen)
 
+lib.ce_alu_gen_destroy.argtypes = [POINTER(CeAluGen)]
+lib.ce_alu_gen_destroy.restype = None
+
 lib.ce_alu_gen_sample.argtypes = [POINTER(CeAluGen)]
 lib.ce_alu_gen_sample.restype = POINTER(CeAluSample)
 

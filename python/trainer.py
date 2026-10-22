@@ -506,6 +506,10 @@ class CEngineTrainer:
         if self._dataloader:
             lib.ce_dataloader_destroy(self._dataloader)
             self._dataloader = None
+        if self._generator:
+            # Freed after the dataloader (which holds a borrowed pointer).
+            lib.ce_alu_gen_destroy(self._generator)
+            self._generator = None
         if self._curriculum:
             lib.ce_curriculum_destroy(self._curriculum)
             self._curriculum = None
@@ -792,6 +796,11 @@ class CEngineTrainer:
                         # Recreate generator and dataloader for new bit range
                         if self._dataloader:
                             lib.ce_dataloader_destroy(self._dataloader)
+                        # The dataloader does NOT own the generator — free
+                        # the old one before replacing it (leaked per stage
+                        # change before this).
+                        if self._generator:
+                            lib.ce_alu_gen_destroy(self._generator)
                         self._generator = lib.ce_curriculum_make_generator(
                             self._curriculum, c_int64(cfg.seed + epoch),
                         )

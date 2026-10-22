@@ -51,6 +51,7 @@ typedef struct {
 
 ce_alu_gen_t*    ce_alu_gen_create(int min_bits, int max_bits,
                                    const int* ops, int n_ops, int64_t seed);
+void             ce_alu_gen_destroy(ce_alu_gen_t* gen);
 ce_alu_sample_t* ce_alu_gen_sample(ce_alu_gen_t* gen);
 ce_batch_t*      ce_alu_gen_batch(ce_alu_gen_t* gen, int batch_size);
 void             ce_alu_sample_destroy(ce_alu_sample_t* sample);

@@ -38,3 +38,10 @@ ce_alu_gen_t* ce_alu_gen_create(int min_bits, int max_bits,
 
     return gen;
 }
+
+void ce_alu_gen_destroy(ce_alu_gen_t* gen) {
+    /* The struct owns nothing else (ops[] is inline) — plain free.
+     * Callers must have stopped every reader first (e.g. destroyed the
+     * dataloader, which borrows this pointer). */
+    free(gen);
+}
