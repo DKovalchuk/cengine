@@ -1127,6 +1127,13 @@ class CEngineTrainer:
     def load_model_pytorch(self, path: str) -> None:
         """Load model weights from a PyTorch .pt checkpoint.
 
+        Two-phase like the raw/CEPY loader: every parameter (name count,
+        key presence, size) is validated BEFORE any tensor is touched —
+        a bad checkpoint raises CEngineError with the model left
+        untouched instead of silently ending up with a MIX of loaded
+        and initial weights (the old code skipped bad entries with a
+        printed WARN and kept going).
+
         Args:
             path: path to .pt file
         """
@@ -1140,18 +1147,38 @@ class CEngineTrainer:
             names = self._infer_param_names()
         except Exception:
             names = list(state_dict.keys())
+        if len(names) != len(params):
+            raise CEngineError(
+                f"Name/model mismatch: {len(names)} names for "
+                f"{len(params)} parameters"
+            )
 
+        staged = []
+        problems = []
         for name, p in zip(names, params):
             if name not in state_dict:
-                print(f"  WARN: key {name!r} not found in checkpoint")
+                problems.append(f"key {name!r} missing")
                 continue
             t = state_dict[name].float().contiguous()
             numel = p.contents.numel
             if t.numel() != numel:
-                print(f"  WARN: size mismatch for {name}: checkpoint={t.numel()}, model={numel}")
+                problems.append(
+                    f"size mismatch for {name}: "
+                    f"checkpoint={t.numel()}, model={numel}"
+                )
                 continue
+            staged.append((p, t))
+
+        if problems:
+            raise CEngineError(
+                "PyTorch checkpoint rejected (model left untouched): "
+                + "; ".join(problems)
+            )
+
+        # Commit — only after every parameter validated (all-or-nothing).
+        for p, t in staged:
             ctypes.memmove(ctypes.addressof(p.contents.data.contents),
-                           t.data_ptr(), numel * 4)
+                           t.data_ptr(), p.contents.numel * 4)
 
         # Restore metadata
         meta = checkpoint.get("metadata", {})
