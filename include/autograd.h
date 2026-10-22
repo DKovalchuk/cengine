@@ -18,6 +18,7 @@ typedef struct {
     void (*backward_fn)(void* state,     /* layer-specific backward */
                         ce_tensor_t* grad_output);
     void* state;                         /* layer-specific state (owned) */
+    void (*state_free)(void* state);     /* releases state's retains */
     int n_inputs;                        /* number of gradient inputs */
 } tape_entry_t;
 
@@ -38,13 +39,16 @@ typedef struct {
 ce_tape_t*   ce_tape_create(void);
 void         ce_tape_destroy(ce_tape_t* tape);
 
-/* Recording */
+/* Recording.  `state_free` releases whatever `state` retained before
+ * `state` itself is freed — without it the tape leaked every tensor a
+ * recorded state kept (retained input/output caches, weights). */
 ce_status_t  ce_tape_start(ce_tape_t* tape);
 ce_status_t  ce_tape_stop(ce_tape_t* tape);
 ce_status_t  ce_tape_record(ce_tape_t* tape,
                             ce_tensor_t* output,
                             void (*backward_fn)(void*, ce_tensor_t*),
-                            void* state, int n_inputs);
+                            void* state, int n_inputs,
+                            void (*state_free)(void*));
 
 /* Backward */
 ce_status_t  ce_tape_backward(ce_tape_t* tape,

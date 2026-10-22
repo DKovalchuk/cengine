@@ -11,6 +11,12 @@ typedef struct {
     ce_tensor_t* output_ref;
 } tanh_state_t;
 
+static void tanh_state_free(void* state) {
+    tanh_state_t* s = (tanh_state_t*)state;
+    if (s->output_ref) ce_tensor_release(s->output_ref);
+    free(s);
+}
+
 static void tanh_tape_backward(void* state, ce_tensor_t* grad_output) {
     tanh_state_t* s = (tanh_state_t*)state;
     if (!s || !grad_output || !s->output_ref) return;
@@ -48,7 +54,8 @@ ce_status_t ce_tanh_forward(ce_module_t* mod,
         if (ts) {
             ce_tensor_retain(state->output_cache);
             ts->output_ref = state->output_cache;
-            ce_tape_record(tape, output, tanh_tape_backward, ts, 1);
+            ce_tape_record(tape, output, tanh_tape_backward, ts, 1,
+                           tanh_state_free);
         }
     }
     return CE_OK;

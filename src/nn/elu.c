@@ -16,6 +16,12 @@ typedef struct {
     float alpha;
 } elu_state_t;
 
+static void elu_state_free(void* state) {
+    elu_state_t* s = (elu_state_t*)state;
+    if (s->output_ref) ce_tensor_release(s->output_ref);
+    free(s);
+}
+
 static void elu_tape_backward(void* state, ce_tensor_t* grad_output) {
     elu_state_t* s = (elu_state_t*)state;
     if (!s || !grad_output || !s->output_ref) return;
@@ -59,7 +65,8 @@ ce_status_t ce_elu_forward(ce_module_t* mod,
             ce_tensor_retain(state->output_cache);
             es->output_ref = state->output_cache;
             es->alpha = state->alpha;
-            ce_tape_record(tape, output, elu_tape_backward, es, 1);
+            ce_tape_record(tape, output, elu_tape_backward, es, 1,
+                           elu_state_free);
         }
     }
     return CE_OK;
