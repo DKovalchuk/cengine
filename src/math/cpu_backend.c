@@ -490,24 +490,27 @@ static ce_status_t cpu_activation_backward(const ce_tensor_t* grad_out,
 static ce_status_t cpu_sum(const ce_tensor_t* in, ce_tensor_t* out, int dim) {
     if (!in || !out) return CE_ERR_INVALID_ARG;
     if (dim < 0 || dim >= in->ndim) return CE_ERR_INVALID_ARG;
+    if (in->shape[dim] == 0 ||
+        out->numel != in->numel / in->shape[dim])
+        return CE_ERR_INVALID_SHAPE;
 
-    int64_t rows = (in->ndim >= 2) ? in->shape[0] : 1;
-    int64_t cols = in->numel / rows;
+    /* Generic reduction over `dim`: outer = strides above the axis,
+     * inner = strides below.  The old code treated every dim != 1 as
+     * "sum over rows of a 2D matrix": correct only for dim 0 — for 3D
+     * dim1 it summed across dim2 as well, and dim >= 2 memset/wrote
+     * `cols = numel/shape[0]` floats past the smaller output. */
+    int64_t outer = 1, inner = 1, r = in->shape[dim];
+    for (int d = 0; d < dim; d++) outer *= in->shape[d];
+    for (int d = dim + 1; d < in->ndim; d++) inner *= in->shape[d];
 
-    if (dim == 1) {
-        /* Sum over columns → output [rows] */
-        for (int64_t r = 0; r < rows; r++) {
+    float* o = out->data;
+    for (int64_t u = 0; u < outer; u++) {
+        for (int64_t i = 0; i < inner; i++) {
             float s = 0.0f;
-            for (int64_t c = 0; c < cols; c++) s += in->data[r * cols + c];
-            out->data[r] = s;
-        }
-    } else {
-        /* Sum over rows → output [cols] */
-        memset(out->data, 0, (size_t)cols * sizeof(float));
-        for (int64_t r = 0; r < rows; r++) {
-            for (int64_t c = 0; c < cols; c++) {
-                out->data[c] += in->data[r * cols + c];
+            for (int64_t k = 0; k < r; k++) {
+                s += in->data[(u * r + k) * inner + i];
             }
+            o[u * inner + i] = s;
         }
     }
     return CE_OK;
@@ -564,21 +567,35 @@ static float cpu_dot(const ce_tensor_t* a, const ce_tensor_t* b) {
 static ce_status_t cpu_max_reduce(const ce_tensor_t* in, ce_tensor_t* out,
                                    int dim, ce_tensor_t* indices) {
     if (!in || !out) return CE_ERR_INVALID_ARG;
-    int64_t rows = (in->ndim >= 2) ? in->shape[0] : 1;
-    int64_t cols = in->numel / rows;
+    if (dim < 0 || dim >= in->ndim) return CE_ERR_INVALID_ARG;
+    if (in->shape[dim] == 0 ||
+        out->numel != in->numel / in->shape[dim])
+        return CE_ERR_INVALID_SHAPE;
+    if (indices && indices->numel != out->numel)
+        return CE_ERR_INVALID_SHAPE;
 
-    if (dim == 1) {
-        for (int64_t r = 0; r < rows; r++) {
-            float best = in->data[r * cols];
+    /* Generic max over `dim` with the same strides as cpu_sum.  The old
+     * code implemented only dim == 1 and returned CE_OK for every other
+     * dim WITHOUT writing the output at all (silent no-op), and never
+     * validated `dim`. */
+    int64_t outer = 1, inner = 1, r = in->shape[dim];
+    for (int d = 0; d < dim; d++) outer *= in->shape[d];
+    for (int d = dim + 1; d < in->ndim; d++) inner *= in->shape[d];
+
+    float* o = out->data;
+    for (int64_t u = 0; u < outer; u++) {
+        for (int64_t i = 0; i < inner; i++) {
+            float best = in->data[(u * r) * inner + i];
             int64_t best_idx = 0;
-            for (int64_t c = 1; c < cols; c++) {
-                if (in->data[r * cols + c] > best) {
-                    best = in->data[r * cols + c];
-                    best_idx = c;
+            for (int64_t k = 1; k < r; k++) {
+                float v = in->data[(u * r + k) * inner + i];
+                if (v > best) {
+                    best = v;
+                    best_idx = k;
                 }
             }
-            out->data[r] = best;
-            if (indices) indices->data[r] = (float)best_idx;
+            o[u * inner + i] = best;
+            if (indices) indices->data[u * inner + i] = (float)best_idx;
         }
     }
     return CE_OK;
