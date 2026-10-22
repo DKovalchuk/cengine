@@ -12,8 +12,9 @@
  * Reference values are computed with libm expf — approximation noise of
  * the fast exp paths is orders of magnitude below the bug signal.
  *
- * Backward is checked with grad_output == 1 (the standard chain-rule
- * factor is exercised elsewhere; this isolates the d_silu term).
+ * Backward is checked against a non-trivial grad_output pattern, which
+ * pins both the d_silu term and the chain-rule grad_output factor in
+ * grad_input.
  */
 #include "cengine.h"
 #include "kan_layer.h"
@@ -186,9 +187,10 @@ static void test_forward_scatter_matches_reference(void) {
     PASS();
 }
 
-/* ---- Backward: d_silu must use sigmoid(+x); grads with g_out == 1 ---- */
+/* ---- Backward: d_silu uses sigmoid(+x); grad_input is weighted by the
+ *       upstream grad_output (chain rule); g_w_b = g_j * silu ------- */
 static void test_backward_matches_reference(void) {
-    TEST("kan_layer backward: d_silu/g_w_b vs scalar ref (g_out=1)");
+    TEST("kan_layer backward: g_out-weighted grad vs scalar ref");
     const int in_f = 8, out_f = 5;
 
     ce_module_t* mod = ce_kan_layer_create(in_f, out_f, "kl_bw");
@@ -198,14 +200,17 @@ static void test_backward_matches_reference(void) {
 
     float inp[8];
     lcg_fill(inp, 8, 4242u);
+    float g_pat[8];
+    lcg_fill(g_pat, 8, 6868u);
+    for (int j = 0; j < out_f; j++)
+        g_pat[j] = g_pat[j] * 1.6f + 1.1f;   /* spread over [0.3, 1.9] */
     int64_t in_s[3] = {1, 1, in_f};
     int64_t out_s[3] = {1, 1, out_f};
     ce_tensor_t* in = ce_tensor_create_from_data(inp, in_s, 3);
     ce_tensor_t* out = ce_tensor_zeros(out_s, 3);
-    ce_tensor_t* g_out = ce_tensor_zeros(out_s, 3);
+    ce_tensor_t* g_out = ce_tensor_create_from_data(g_pat, out_s, 3);
     ce_tensor_t* g_in = ce_tensor_zeros(in_s, 3);
     ASSERT(in && out && g_out && g_in, "tensor alloc");
-    for (int64_t i = 0; i < g_out->numel; i++) g_out->data[i] = 1.0f;
 
     ASSERT(ce_kan_layer_forward(mod, in, out) == CE_OK, "forward failed");
     ASSERT(ce_kan_layer_backward(mod, g_out, g_in) == CE_OK,
@@ -216,8 +221,8 @@ static void test_backward_matches_reference(void) {
     ref_forward(mod, inp, ref, xn, silu, basis);
 
     /* d_silu = sigmoid(x) * (1 + x*(1 - sigmoid(x)))
-     * grad_in[i] = 2 * sum_j g_j*(w_b*d_silu + w_s*sum_k c*d_basis_k),
-     * g_j == 1 here. */
+     * grad_in[i] = 2 * sum_j g_j*(w_b*d_silu + w_s*sum_k c*d_basis_k) —
+     * the upstream g_j must weight the sum (chain rule). */
     float grad_ref[8];
     for (int i = 0; i < in_f; i++) {
         float x = xn[i];
@@ -229,8 +234,9 @@ static void test_backward_matches_reference(void) {
             float d_spline = 0.0f;
             for (int k = 0; k < 4; k++)
                 d_spline += st->c->data[(j * in_f + i) * 4 + k] * d_basis[k];
-            acc += st->w_b->data[j * in_f + i] * dsilu
-                 + st->w_s->data[j * in_f + i] * d_spline;
+            acc += g_pat[j] *
+                 (st->w_b->data[j * in_f + i] * dsilu
+                + st->w_s->data[j * in_f + i] * d_spline);
         }
         grad_ref[i] = acc * 2.0f;
     }
@@ -245,12 +251,12 @@ static void test_backward_matches_reference(void) {
         return;
     }
 
-    /* g_w_b[j,i] = sum_n g_j * silu[n,i]; N=1, g=1 → broadcast silu
+    /* g_w_b[j,i] = sum_n g_j * silu[n,i]; N=1 → g_pat[j]*silu[i]
      * over the [out_f, in_f] gradient layout. */
     float gwb_ref[8 * 5];
     for (int j = 0; j < out_f; j++)
         for (int i = 0; i < in_f; i++)
-            gwb_ref[j * in_f + i] = silu[i];
+            gwb_ref[j * in_f + i] = g_pat[j] * silu[i];
     d = max_diff(st->g_w_b->data, gwb_ref, (int64_t)in_f * out_f);
     if (d > TOL) {
         char buf[160];
