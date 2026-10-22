@@ -8,6 +8,14 @@ typedef struct {
     float temperature;       /* 0.0 for standard softmax */
 } softmax_state_t;
 
+/* Layer state for the production (non-tape) path — mirrors sigmoid:
+ * forward caches its output, backward needs it for the JVP. */
+typedef struct {
+    ce_activation_t act_type;
+    float temperature;
+    ce_tensor_t* output_cache;
+} softmax_layer_state_t;
+
 /* Backward: Jacobian-vector product for softmax
  *   grad_input_i = y_i * (grad_i - sum_j(grad_j * y_j))
  * Also used for Gumbel-Softmax STE (same formula). */
@@ -44,6 +52,13 @@ ce_module_t* ce_softmax_create(const char* name) {
     ce_module_t* mod = ce_module_create(name ? name : "softmax");
     if (!mod) return NULL;
 
+    softmax_layer_state_t* state =
+        (softmax_layer_state_t*)calloc(1, sizeof(softmax_layer_state_t));
+    if (!state) { ce_module_destroy(mod); return NULL; }
+    state->act_type = CE_ACT_SOFTMAX;
+    state->temperature = 1.0f;
+    mod->internal_state = state;
+
     mod->forward  = ce_softmax_forward;
     mod->backward = ce_softmax_backward;
     return mod;
@@ -57,10 +72,12 @@ ce_module_t* ce_gumbel_softmax_create(float temperature, const char* name) {
     ce_module_t* mod = ce_module_create(name ? name : "gumbel_softmax");
     if (!mod) return NULL;
 
-    float* temp_ptr = (float*)calloc(1, sizeof(float));
-    if (!temp_ptr) { ce_module_destroy(mod); return NULL; }
-    *temp_ptr = temperature;
-    mod->internal_state = temp_ptr;
+    softmax_layer_state_t* state =
+        (softmax_layer_state_t*)calloc(1, sizeof(softmax_layer_state_t));
+    if (!state) { ce_module_destroy(mod); return NULL; }
+    state->act_type = CE_ACT_GUMBEL_SOFTMAX;
+    state->temperature = temperature;
+    mod->internal_state = state;
 
     mod->forward  = ce_softmax_forward;
     mod->backward = ce_softmax_backward;
@@ -70,17 +87,16 @@ ce_module_t* ce_gumbel_softmax_create(float temperature, const char* name) {
 ce_status_t ce_softmax_forward(ce_module_t* mod,
                                 ce_tensor_t* input, ce_tensor_t* output) {
     if (!mod || !input || !output) return CE_ERR_INVALID_ARG;
+    softmax_layer_state_t* state = (softmax_layer_state_t*)mod->internal_state;
+    if (!state) return CE_ERR_NOT_INITIALIZED;
 
-    /* Determine activation type and temperature */
-    ce_activation_t act_type = CE_ACT_SOFTMAX;
-    float temperature = 1.0f;
-    if (mod->internal_state) {
-        act_type = CE_ACT_GUMBEL_SOFTMAX;
-        temperature = *(float*)mod->internal_state;
-    }
-
-    ce_status_t st = ce_act(input, act_type, 0.0f, temperature, output);
+    ce_status_t st = ce_act(input, state->act_type, 0.0f,
+                            state->temperature, output);
     if (st != CE_OK) return st;
+
+    /* Cache output for the non-tape backward (mirrors sigmoid). */
+    if (state->output_cache) ce_tensor_release(state->output_cache);
+    state->output_cache = ce_tensor_clone(output);
 
     /* Record tape entry */
     ce_tape_t* tape = ce_get_tape();
@@ -90,7 +106,7 @@ ce_status_t ce_softmax_forward(ce_module_t* mod,
         if (ss) {
             ce_tensor_retain(output);
             ss->output_ref  = output;
-            ss->temperature = temperature;
+            ss->temperature = state->temperature;
             ce_tape_record(tape, output, softmax_tape_backward, ss, 1);
         }
     }
@@ -101,6 +117,11 @@ ce_status_t ce_softmax_backward(ce_module_t* mod,
                                  ce_tensor_t* grad_output,
                                  ce_tensor_t* grad_input) {
     if (!mod || !grad_output || !grad_input) return CE_ERR_INVALID_ARG;
-    (void)grad_input;
-    return CE_OK;
+    softmax_layer_state_t* state = (softmax_layer_state_t*)mod->internal_state;
+    if (!state || !state->output_cache) return CE_ERR_NOT_INITIALIZED;
+
+    /* JVP over the cached forward output — the same formula the tape
+     * path applies, and (for Gumbel) the same "same formula" STE. */
+    return ce_get_default_backend()->activation_backward(
+        grad_output, state->output_cache, CE_ACT_SOFTMAX, 0.0f, grad_input);
 }
