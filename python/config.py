@@ -91,6 +91,31 @@ class TrainingConfig:
     model_output_dim: int = 0  # 0 = auto-detect from last layer
 
     # -----------------------------------------------------------------------
+    # Validation
+    # -----------------------------------------------------------------------
+
+    def __post_init__(self) -> None:
+        # A loss_type typo ("BCE") would fall through the trainer's
+        # `else` branch and silently train with MSE instead.
+        if self.loss_type not in ("bce", "mse"):
+            raise ValueError(
+                f"loss_type must be 'bce' or 'mse', got {self.loss_type!r}"
+            )
+        if self.optimizer not in ("adamw", "sgd"):
+            raise ValueError(
+                f"optimizer must be 'adamw' or 'sgd', got {self.optimizer!r}"
+            )
+        if self.min_bits < 1 or self.max_bits < self.min_bits:
+            raise ValueError(
+                f"bit range must satisfy 1 <= min_bits <= max_bits, "
+                f"got {self.min_bits}..{self.max_bits}"
+            )
+        if self.batch_size < 1:
+            raise ValueError(f"batch_size must be >= 1, got {self.batch_size}")
+        if self.total_epochs < 1:
+            raise ValueError(f"total_epochs must be >= 1, got {self.total_epochs}")
+
+    # -----------------------------------------------------------------------
     # Derived helpers
     # -----------------------------------------------------------------------
 
