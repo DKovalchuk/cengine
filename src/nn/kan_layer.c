@@ -112,8 +112,7 @@ ce_status_t ce_kan_layer_forward_batch(ce_module_t* mod,
             }
 
             /* SiLU: x * sigmoid(x) */
-            __m256 neg_x = _mm256_sub_ps(_mm256_setzero_ps(), x);
-            __m256 s = avx2_sigmoid_ps(neg_x);
+            __m256 s = avx2_sigmoid_ps(x);
             __m256 sily = _mm256_mul_ps(x, s);
             _mm256_storeu_ps(s_n + i, sily);
         }
@@ -149,17 +148,21 @@ ce_status_t ce_kan_layer_forward_batch(ce_module_t* mod,
             int j = 0;
 #if CE_HAS_AVX2
             for (; j + 3 < out_f; j += 4) {
-                /* Load w_b[j..j+3, i] and w_s[j..j+3, i] */
+                /* Load w_b/w_s for j..j+3 in the SAME lane layout as ck/sv
+                 * below: lane k and k+4 = element (j+k).  The old
+                 * duplicated-pair layout here vs sequential layout in ck
+                 * mixed w_b of one output with w_s*spline of another, so
+                 * y[j+1..j+3] got wrong phi and j+3 was dropped. */
                 __m256 wb = _mm256_set_ps(
-                    w_b[(j+3)*in_f+i], w_b[(j+3)*in_f+i],
-                    w_b[(j+2)*in_f+i], w_b[(j+2)*in_f+i],
-                    w_b[(j+1)*in_f+i], w_b[(j+1)*in_f+i],
-                    w_b[(j+0)*in_f+i], w_b[(j+0)*in_f+i]);
+                    w_b[(j+3)*in_f+i], w_b[(j+2)*in_f+i],
+                    w_b[(j+1)*in_f+i], w_b[(j+0)*in_f+i],
+                    w_b[(j+3)*in_f+i], w_b[(j+2)*in_f+i],
+                    w_b[(j+1)*in_f+i], w_b[(j+0)*in_f+i]);
                 __m256 ws = _mm256_set_ps(
-                    w_s[(j+3)*in_f+i], w_s[(j+3)*in_f+i],
-                    w_s[(j+2)*in_f+i], w_s[(j+2)*in_f+i],
-                    w_s[(j+1)*in_f+i], w_s[(j+1)*in_f+i],
-                    w_s[(j+0)*in_f+i], w_s[(j+0)*in_f+i]);
+                    w_s[(j+3)*in_f+i], w_s[(j+2)*in_f+i],
+                    w_s[(j+1)*in_f+i], w_s[(j+0)*in_f+i],
+                    w_s[(j+3)*in_f+i], w_s[(j+2)*in_f+i],
+                    w_s[(j+1)*in_f+i], w_s[(j+0)*in_f+i]);
 
                 /* Compute spline_val for j..j+3: sum_k c[j,i,k]*basis[i,k] */
                 __m256 sv = _mm256_setzero_ps();
@@ -173,10 +176,8 @@ ce_status_t ce_kan_layer_forward_batch(ce_module_t* mod,
                     sv = _mm256_fmadd_ps(ck, bk, sv);
                 }
 
-                /* phi = w_b * silu + w_s * spline_val */
-                __m256 phi = _mm256_fmadd_ps(wb, _mm256_set1_ps(si), sv);
-                /* Actually: phi = w_b*si + w_s*sv */
-                phi = _mm256_add_ps(
+                /* phi = w_b * silu + w_s * spline_val (lanes 0..3 = j..j+3) */
+                __m256 phi = _mm256_add_ps(
                     _mm256_mul_ps(wb, _mm256_set1_ps(si)),
                     _mm256_mul_ps(ws, sv));
 
@@ -254,8 +255,7 @@ ce_status_t ce_kan_layer_backward_batch(ce_module_t* mod,
 #if CE_HAS_AVX2
         for (; i + 7 < in_f; i += 8) {
             __m256 x = _mm256_loadu_ps(xn + n * in_f + i);
-            __m256 neg_x = _mm256_sub_ps(_mm256_setzero_ps(), x);
-            __m256 sig = avx2_sigmoid_ps(neg_x);
+            __m256 sig = avx2_sigmoid_ps(x);
             __m256 one = _mm256_set1_ps(1.0f);
             __m256 d = _mm256_mul_ps(sig,
                 _mm256_fmadd_ps(x, _mm256_sub_ps(one, sig), one));
