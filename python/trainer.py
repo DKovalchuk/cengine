@@ -992,30 +992,67 @@ class CEngineTrainer:
                     self._best_loss = meta.get("best_loss", 0.0)
                 return
 
-        # Fallback: load Python raw format
+        # Fallback: load Python raw format — two-phase: parse and validate
+        # the WHOLE file against the model BEFORE touching any tensor.
+        # The old code trusted the file's own numel/shape: a different
+        # layout was silently loaded (transposed weights), an oversized
+        # numel memmove'd past the model tensor (heap OOB write), and a
+        # truncated file produced a SHORT buffer memmove read past —
+        # mixed weights with no rollback either way.
         import struct
         bin_path = os.path.join(path, "checkpoint_latest.bin")
         if not os.path.exists(bin_path):
             print(f"  WARN: No checkpoint found at {path}")
             return
 
-        params = self._model.parameters()
         with open(bin_path, "rb") as f:
-            magic = f.read(4)
-            if magic != b"CEPY":
-                print(f"  WARN: Unknown checkpoint format: {magic}")
-                return
-            version = struct.unpack("<I", f.read(4))[0]
-            n_params = struct.unpack("<I", f.read(4))[0]
-            if n_params != len(params):
-                print(f"  WARN: Param count mismatch: checkpoint={n_params}, model={len(params)}")
-                return
-            for p in params:
-                ndim = struct.unpack("<I", f.read(4))[0]
-                shape = [struct.unpack("<I", f.read(4))[0] for _ in range(ndim)]
-                numel = struct.unpack("<Q", f.read(8))[0]
-                raw = f.read(numel * 4)
-                ctypes.memmove(ctypes.addressof(p.contents.data.contents), raw, numel * 4)
+            blob = f.read()
+
+        if len(blob) < 12 or blob[:4] != b"CEPY":
+            raise CEngineError(
+                f"Unrecognised checkpoint format in {bin_path!r}: "
+                f"{blob[:4] if len(blob) >= 4 else blob!r}"
+            )
+        n_params = struct.unpack_from("<I", blob, 8)[0]
+        params = self._model.parameters()
+        if n_params != len(params):
+            raise CEngineError(
+                f"Param count mismatch: checkpoint={n_params}, "
+                f"model={len(params)}"
+            )
+
+        pos = 12
+        staged: list[tuple[Any, bytes]] = []
+        for idx, p in enumerate(params):
+            if pos + 4 > len(blob):
+                raise CEngineError(f"Truncated checkpoint before param {idx}")
+            ndim = struct.unpack_from("<I", blob, pos)[0]
+            pos += 4
+            if pos + 4 * ndim + 8 > len(blob):
+                raise CEngineError(f"Truncated checkpoint header of param {idx}")
+            shape = list(struct.unpack_from(f"<{ndim}I", blob, pos))
+            pos += 4 * ndim
+            numel = struct.unpack_from("<Q", blob, pos)[0]
+            pos += 8
+
+            model_shape = [p.contents.shape[d] for d in range(p.contents.ndim)]
+            if ndim != p.contents.ndim or shape != model_shape \
+                    or numel != p.contents.numel:
+                raise CEngineError(
+                    f"Checkpoint shape mismatch for param {idx}: "
+                    f"file ndim={ndim} shape={shape} numel={numel}, "
+                    f"model ndim={p.contents.ndim} shape={model_shape} "
+                    f"numel={p.contents.numel}"
+                )
+            if pos + numel * 4 > len(blob):
+                raise CEngineError(f"Truncated data of param {idx}")
+            staged.append((p, blob[pos:pos + numel * 4]))
+            pos += numel * 4
+
+        # Commit — only after every parameter validated (all-or-nothing).
+        for p, raw in staged:
+            ctypes.memmove(ctypes.addressof(p.contents.data.contents),
+                           raw, len(raw))
 
         # Load meta
         meta_path = os.path.join(path, "meta.json")
