@@ -82,9 +82,10 @@ class TestRecurrentForward:
 
         B, T, F = 4, 8, 6
         inp = _make_tensor_3d((B, T, F))
-        # Fill with small random values
+        # Fill with small random values from a test-local generator
+        rng = np.random.default_rng(101)
         for i in range(B * T * F):
-            inp.contents.data[i] = np.random.randn() * 0.1
+            inp.contents.data[i] = rng.standard_normal() * 0.1
 
         out = _make_tensor_3d((B, T, 2))
         expert.forward(inp, out)
@@ -112,8 +113,8 @@ class TestRecurrentForward:
         expert = RecurrentExpert(hidden_size=H, name="test_det")
 
         B, T, F = 2, 6, 6
-        np.random.seed(42)
-        data = np.random.randn(B, T, F).astype(np.float32) * 0.1
+        rng = np.random.default_rng(42)
+        data = rng.standard_normal((B, T, F)).astype(np.float32) * 0.1
 
         inp1 = _make_tensor_3d((B, T, F), data)
         out1 = _make_tensor_3d((B, T, 2))
@@ -207,8 +208,9 @@ class TestRecurrentBackward:
         expert = RecurrentExpert(hidden_size=H, name="test_grad")
 
         inp = _make_tensor_3d((B, T, 6))
+        rng = np.random.default_rng(102)
         for i in range(B * T * 6):
-            inp.contents.data[i] = np.random.randn() * 0.1
+            inp.contents.data[i] = rng.standard_normal() * 0.1
 
         out = _make_tensor_3d((B, T, 2))
         expert.forward(inp, out)
@@ -231,8 +233,8 @@ class TestRecurrentBackward:
         B, T = 1, 2
         expert = RecurrentExpert(hidden_size=H, name="test_grad_p")
 
-        np.random.seed(456)
-        inp_data = np.random.randn(B, T, 6).astype(np.float32) * 0.1
+        rng = np.random.default_rng(456)
+        inp_data = rng.standard_normal((B, T, 6)).astype(np.float32) * 0.1
 
         # Forward + backward
         inp = _make_tensor_3d((B, T, 6), inp_data)
@@ -257,8 +259,9 @@ class TestRecurrentBackward:
         expert = RecurrentExpert(hidden_size=H, name="test_novg")
 
         inp = _make_tensor_3d((B, T, 6))
+        rng = np.random.default_rng(103)
         for i in range(B * T * 6):
-            inp.contents.data[i] = np.random.randn() * 0.5
+            inp.contents.data[i] = rng.standard_normal() * 0.5
 
         out = _make_tensor_3d((B, T, 2))
         expert.forward(inp, out)
@@ -293,8 +296,9 @@ class TestRecurrentActivations:
         expert = RecurrentExpert(hidden_size=H, name="test_act")
 
         inp = _make_tensor_3d((B, T, 6))
+        rng = np.random.default_rng(104)
         for i in range(B * T * 6):
-            inp.contents.data[i] = np.random.randn() * 0.3
+            inp.contents.data[i] = rng.standard_normal() * 0.3
 
         out = _make_tensor_3d((B, T, 2))
         expert.forward(inp, out)
@@ -311,8 +315,9 @@ class TestRecurrentActivations:
         expert = RecurrentExpert(hidden_size=H, name="test_range")
 
         inp = _make_tensor_3d((B, T, 6))
+        rng = np.random.default_rng(105)
         for i in range(B * T * 6):
-            inp.contents.data[i] = np.random.randn() * 0.5
+            inp.contents.data[i] = rng.standard_normal() * 0.5
 
         out = _make_tensor_3d((B, T, 2))
         expert.forward(inp, out)
@@ -345,8 +350,9 @@ class TestDebugLogging:
         expert = RecurrentExpert(hidden_size=H, name="test_dbg")
 
         inp = _make_tensor_3d((B, T, 6))
+        rng = np.random.default_rng(106)
         for i in range(B * T * 6):
-            inp.contents.data[i] = np.random.randn() * 0.1
+            inp.contents.data[i] = rng.standard_normal() * 0.1
 
         out = _make_tensor_3d((B, T, 2))
         expert.forward(inp, out)  # Should not crash
@@ -399,8 +405,8 @@ class TestShapeValidation:
         """The supported width works and repeats bit-exactly."""
         H, B, T, F = 8, 2, 6, 6
         expert = RecurrentExpert(hidden_size=H, name="test_shape_ok")
-        np.random.seed(1000)
-        data = np.random.randn(B, T, F).astype(np.float32) * 0.1
+        rng = np.random.default_rng(1000)
+        data = rng.standard_normal((B, T, F)).astype(np.float32) * 0.1
         outs = []
         for _ in range(3):
             inp = _make_tensor_3d((B, T, F), data)
