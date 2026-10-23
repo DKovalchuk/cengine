@@ -30,7 +30,7 @@ from cengine import (
     Sigmoid,
     TrainingConfig,
 )
-from cengine.bindings import check, lib
+from cengine.bindings import c_int64, check, lib
 
 check(lib.ce_init())
 
@@ -96,6 +96,72 @@ def test_moe_param_names_match_torch_modulelist(tmp_path):
         f"got: {names[:4]} ..."
     )
     assert names[0] == "experts.0.w1"
+
+
+def test_sequential_state_dict_keys_match_torch(tmp_path):
+    """Sequential checkpoints must use torch nn.Sequential numbering.
+
+    A rebuilt torch.nn.Sequential numbers its children from 0 (activations
+    included), so its state_dict keys are ``0.weight``/``2.weight`` — the
+    cengine state_dict must use the same keys for load_state_dict(strict).
+    """
+    torch = pytest.importorskip("torch")
+
+    model = Sequential(
+        Linear(6, 8, name="k_l1"), ELU(name="k_elu"),
+        Linear(8, 4, name="k_l2"), Sigmoid(name="k_sig"),
+        name="keys_model",
+    )
+    trainer = CEngineTrainer(model, _cfg(tmp_path))
+    path = str(tmp_path / "keys.pt")
+    trainer.save_model_pytorch(path)
+
+    ckpt = torch.load(path, map_location="cpu", weights_only=False)
+    keys = set(ckpt["state_dict"].keys())
+    assert keys == {"0.weight", "0.bias", "2.weight", "2.bias"}, (
+        f"state_dict keys must follow torch nn.Sequential numbering, got {sorted(keys)}"
+    )
+    model.close()
+
+
+def test_torch_model_matches_cengine_forward(tmp_path):
+    """The rebuilt torch module must reproduce the cengine forward pass."""
+    torch = pytest.importorskip("torch")
+    import numpy as np
+
+    from cengine.pytorch_bridge import load_model_torch
+
+    model = Sequential(
+        Linear(6, 8, name="f_l1"), ELU(name="f_elu"),
+        Linear(8, 4, name="f_l2"), Sigmoid(name="f_sig"),
+        name="fwd_model",
+    )
+    trainer = CEngineTrainer(model, _cfg(tmp_path))
+    path = str(tmp_path / "fwd.pt")
+    trainer.save_model_pytorch(path)
+
+    torch_model = load_model_torch(path)
+    torch_model.eval()
+
+    rng = np.random.default_rng(7)
+    x = rng.standard_normal((4, 6)).astype(np.float32)
+
+    # Same input through both engines.
+    in_t = lib.ce_tensor_zeros((c_int64 * 2)(4, 6), 2)
+    for i, v in enumerate(x.ravel()):
+        in_t.contents.data[i] = float(v)
+    out_t = lib.ce_tensor_zeros((c_int64 * 2)(4, 4), 2)
+    model.forward(in_t, out_t)
+    y_cengine = np.ctypeslib.as_array(out_t.contents.data[:16]).reshape(4, 4).copy()
+
+    with torch.no_grad():
+        y_torch = torch_model(torch.from_numpy(x)).numpy()
+
+    assert np.allclose(y_cengine, y_torch, atol=1e-5), (
+        f"torch module disagrees with cengine: maxdiff="
+        f"{np.abs(y_cengine - y_torch).max():.3g}"
+    )
+    model.close()
 
 
 if __name__ == "__main__":

@@ -1192,6 +1192,19 @@ class CEngineTrainer:
         params = self._model.parameters()
         n = len(params)
 
+        # Sequential container: torch nn.Sequential numbers every child
+        # from 0 (activations included), so its state_dict keys are
+        # "0.weight" / "2.bias" — the same numbering a rebuilt
+        # torch.nn.Sequential uses, making load_state_dict(strict) work.
+        if type(self._model).__name__ == "Sequential":
+            names = []
+            for i, child in enumerate(self._model._children):
+                if type(child).__name__ == "Linear":
+                    names.append(f"{i}.weight")
+                    names.append(f"{i}.bias")
+            if names and len(names) == n:
+                return names
+
         # RecurrentExpert has exactly 8 params
         if n == 8:
             return list(self._RECURRENT_PARAM_NAMES)
