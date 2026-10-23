@@ -1121,6 +1121,7 @@ class CEngineTrainer:
             "loss": float(self._current_loss),
             "best_loss": float(self._best_loss),
             "model_type": type(self._model).__name__,
+            "architecture": self._model.architecture(),
         }
         torch.save({"state_dict": state_dict, "metadata": metadata}, path)
 
@@ -1200,7 +1201,7 @@ class CEngineTrainer:
             names = []
             for i, _ in enumerate(self._model.experts):
                 for pname in self._RECURRENT_PARAM_NAMES:
-                    names.append(f"expert.{i}.{pname}")
+                    names.append(f"experts.{i}.{pname}")
             return names
 
         # Fallback: generic names
