@@ -72,6 +72,20 @@ tables. Construction with an invalid value raises `ValueError`.
 | `export_csv(path)` / `export_json(path)` | write collected history |
 | `detect_anomalies()` / `detect_memory_leak()` | stream summaries |
 
+## PyTorch bridge
+
+`cengine.pytorch_bridge` rebuilds torch modules from cengine checkpoints
+(requires `torch`, imported lazily — cengine itself stays torch-free):
+
+| Function | Meaning |
+| --- | --- |
+| `build_torch_model(architecture)` | torch module from a `Module.architecture()` description |
+| `load_model_torch(path)` | rebuild + strict-`load_state_dict` of a `.pt` written by `save_model_pytorch` |
+
+The round trip (cengine → `.pt` → torch → cengine) is covered in
+[Training](training.md#pytorch-interop-cuda) and runnable as
+`examples/05_pytorch_cuda.py`.
+
 ## Low-level bindings
 
 `cengine.bindings` mirrors the whole C ABI: `lib` (the loaded

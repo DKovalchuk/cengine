@@ -84,6 +84,7 @@ pip install .    # запускает `make shared` и кладёт libcengine.s
 - [`02_checkpoints_telemetry.py`](examples/02_checkpoints_telemetry.py) — сохранение, перезагрузка, resume, экспорт метрик
 - [`03_manual_training_loop.py`](examples/03_manual_training_loop.py) — forward/backward/Adam без тренера
 - [`04_recurrent_expert.py`](examples/04_recurrent_expert.py) — рекуррентный эксперт с carry-пропагацией
+- [`05_pytorch_cuda.py`](examples/05_pytorch_cuda.py) — PyTorch-мост: продолжение обучения на CUDA и обратно
 
 ## Тесты
 

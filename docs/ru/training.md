@@ -123,6 +123,36 @@ other.load_model("checkpoints/run1")       # в свежесобранную м�
 Авто-чекпоинты идут тем же путём: каждые `save_every_n_epochs` тренер
 пишет `checkpoint_dir` плюс JSON-спутник на эпоху.
 
+## Интероперация с PyTorch (CUDA)
+
+Экспортируйте чекпоинт и продолжите обучение на GPU:
+
+```python
+trainer.save_model_pytorch("model.pt")     # state_dict + metadata с архитектурой
+
+from cengine.pytorch_bridge import load_model_torch
+torch_model = load_model_torch("model.pt") # восстанавливает эквивалентную torch-модель
+torch_model.to("cuda")
+# ... обычное обучение в torch ...
+torch.save({"state_dict": torch_model.state_dict(),
+            "metadata": {"architecture": model.architecture()}}, "model.pt")
+
+trainer.load_model_pytorch("model.pt")     # веса обратно в cengine
+```
+
+- `Module.architecture()` записывает типы и размеры слоёв в metadata `.pt`,
+  поэтому файл сам описывает, как пересобрать модель.
+- Чекпоинты Sequential используют нумерацию детей torch `nn.Sequential`
+  (`0.weight`, `2.bias`); ключи MoE — `experts.{i}.{name}` —
+  `load_state_dict(strict=True)` совпадает.
+- Мост закреплён тестами: пересобранная torch-модель воспроизводит
+  cengine-forward (maxdiff < 1e-5), оба загрузчика двухфазные (битый
+  чекпоинт никогда не грузится частично).
+- У `RecurrentExpert` нет общего torch-эквивалента — соберите
+  рекуррентную модуль вручную; ключи параметров (`w1`, `b1`, …)
+  совпадают с порядком C-регистрации.
+- Запускаемая версия: [`examples/05_pytorch_cuda.py`](../../examples/05_pytorch_cuda.py).
+
 ## Телеметрия
 
 ```python

@@ -73,6 +73,20 @@ Dataclass с валидацией в `__post_init__`; полные таблиц�
 | `export_csv(path)` / `export_json(path)` | запись накопленной истории |
 | `detect_anomalies()` / `detect_memory_leak()` | сводки по потоку |
 
+## PyTorch-мост
+
+`cengine.pytorch_bridge` пересобирает torch-модели из чекпоинтов cengine
+(нужен `torch`, импортируется лениво — сам cengine остаётся torch-free):
+
+| Функция | Смысл |
+| --- | --- |
+| `build_torch_model(architecture)` | torch-модель из описания `Module.architecture()` |
+| `load_model_torch(path)` | пересборка + strict-`load_state_dict` `.pt`, записанного `save_model_pytorch` |
+
+Round trip (cengine → `.pt` → torch → cengine) описан в гайде
+[Обучение](training.md#интероперация-с-pytorch-cuda) и запускается как
+`examples/05_pytorch_cuda.py`.
+
 ## Низкоуровневые биндинги
 
 `cengine.bindings` зеркалит весь C ABI: `lib` (загруженный

@@ -83,6 +83,7 @@ executed by CI on each change:
 - [`02_checkpoints_telemetry.py`](examples/02_checkpoints_telemetry.py) — save, reload, resume, export metrics
 - [`03_manual_training_loop.py`](examples/03_manual_training_loop.py) — forward/backward/Adam without the trainer
 - [`04_recurrent_expert.py`](examples/04_recurrent_expert.py) — recurrent expert with carry propagation
+- [`05_pytorch_cuda.py`](examples/05_pytorch_cuda.py) — PyTorch bridge: continue training on CUDA and back
 
 ## Testing
 
