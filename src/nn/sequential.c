@@ -83,6 +83,28 @@ ce_status_t ce_sequential_add(ce_module_t* seq_mod, ce_module_t* child) {
         seq->capacity = new_cap;
     }
 
+    /* Expose the child's parameters/gradients on the container: generic
+     * consumers of ce_module_param_count (checkpoint save/load, the C
+     * trainer) must see the whole model instead of an empty parent list —
+     * otherwise a Sequential checkpoint is written with n_params = 0 (a
+     * 20-byte header, no weights) while save/load still report CE_OK.
+     * ce_tensor_list_append retains and the parent lists are destroyed
+     * after the children, so ownership stays balanced.  Python's
+     * Module._collect_params reads parent lists only for leaf modules,
+     * so container consumers never see duplicates. */
+    for (int i = 0; i < child->parameters->count; i++) {
+        ce_tensor_t* p = child->parameters->tensors[i];
+        if (!p) continue;
+        ce_status_t st = ce_tensor_list_append(seq_mod->parameters, p);
+        if (st != CE_OK) return st;
+    }
+    for (int i = 0; i < child->gradients->count; i++) {
+        ce_tensor_t* g = child->gradients->tensors[i];
+        if (!g) continue;
+        ce_status_t st = ce_tensor_list_append(seq_mod->gradients, g);
+        if (st != CE_OK) return st;
+    }
+
     seq->children[seq->count++] = child;
     return CE_OK;
 }

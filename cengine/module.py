@@ -101,7 +101,10 @@ class Module:
         return grads
 
     def _collect_params(self, out: list[POINTER(CeTensor)]) -> None:
-        if self._handle is not None:
+        # Containers expose a flat parent list (registered by
+        # ce_sequential_add) — read parent lists only for leaf modules so
+        # container consumers never see duplicates; recurse for children.
+        if self._handle is not None and not self._children:
             n = lib.ce_module_param_count(self._handle)
             for i in range(n):
                 out.append(lib.ce_module_get_parameter(self._handle, i))
@@ -109,7 +112,7 @@ class Module:
             child._collect_params(out)
 
     def _collect_grads(self, out: list[POINTER(CeTensor)]) -> None:
-        if self._handle is not None:
+        if self._handle is not None and not self._children:
             n = lib.ce_module_param_count(self._handle)
             for i in range(n):
                 out.append(lib.ce_module_get_gradient(self._handle, i))
