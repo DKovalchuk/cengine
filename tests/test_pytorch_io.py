@@ -31,10 +31,10 @@ if PROJECT_ROOT not in sys.path:
 
 torch = pytest.importorskip("torch")
 
-from python.bindings import CEngineError, check, lib
-from python.config import TrainingConfig
-from python.module import Linear
-from python.trainer import CEngineTrainer
+from cengine.bindings import CEngineError, check, lib
+from cengine.config import TrainingConfig
+from cengine.module import Linear
+from cengine.trainer import CEngineTrainer
 
 check(lib.ce_init())
 

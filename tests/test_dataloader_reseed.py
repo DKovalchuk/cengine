@@ -29,7 +29,7 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
     sys_path_added = True
 
-from python.bindings import CE_OK, c_int, c_int64, check, lib
+from cengine.bindings import CE_OK, c_int, c_int64, check, lib
 
 check(lib.ce_init())
 
@@ -108,24 +108,24 @@ def test_trainer_does_not_mutate_generator_fields():
     prefetch worker; all reconfiguration goes through
     ``ce_dataloader_reseed()`` which joins the worker first.
     """
-    trainer_path = os.path.join(PROJECT_ROOT, "python", "trainer.py")
+    trainer_path = os.path.join(PROJECT_ROOT, "cengine", "trainer.py")
     with open(trainer_path, encoding="utf-8") as f:
         src = f.read()
 
     assert ".rng_state =" not in src, (
-        "python/trainer.py writes rng_state directly — races with the "
+        "cengine/trainer.py writes rng_state directly — races with the "
         "dataloader prefetch worker; use ce_dataloader_reseed()"
     )
     assert "gen.n_ops =" not in src, (
-        "python/trainer.py writes n_ops directly — races with the "
+        "cengine/trainer.py writes n_ops directly — races with the "
         "dataloader prefetch worker; use ce_dataloader_reseed()"
     )
     assert "gen.ops[" not in src, (
-        "python/trainer.py writes ops directly — races with the "
+        "cengine/trainer.py writes ops directly — races with the "
         "dataloader prefetch worker; use ce_dataloader_reseed()"
     )
     assert "ce_dataloader_reseed" in src, (
-        "python/trainer.py does not use ce_dataloader_reseed"
+        "cengine/trainer.py does not use ce_dataloader_reseed"
     )
 
 

@@ -18,8 +18,8 @@ import pytest
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
 
-from python.bindings import lib, c_int, c_int64, check
-from python.trainer import _batch_to_tensors
+from cengine.bindings import lib, c_int, c_int64, check
+from cengine.trainer import _batch_to_tensors
 
 # Ensure C engine is initialized
 check(lib.ce_init())

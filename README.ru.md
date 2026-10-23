@@ -63,11 +63,8 @@ python -m pytest tests/ -q
 ## Использование из Python
 
 ```python
-import sys
-sys.path.insert(0, ".")
-
-from python.bindings import lib, check
-from python.module import RecurrentExpert
+from cengine.bindings import lib, check
+from cengine.module import RecurrentExpert
 
 check(lib.ce_init())
 
@@ -80,11 +77,11 @@ expert = RecurrentExpert(hidden_size=8, name="demo")
 ```
 Python (ctypes)                    Ядро C11
 ─────────────────                  ─────────────────────────────
-python/bindings.py   ── FFI ──►    core/       тензор, пул памяти
-python/module.py                 │   math/      AVX2-ядра
-python/trainer.py                │   nn/        слои, рекуррент
-python/config.py                 │   autograd/  лента, backward
-python/telemetry.py              │   training/  тренер, оптимизаторы
+cengine/bindings.py  ── FFI ──►    core/       тензор, пул памяти
+cengine/module.py                │   math/      AVX2-ядра
+cengine/trainer.py               │   nn/        слои, рекуррент
+cengine/config.py                │   autograd/  лента, backward
+cengine/telemetry.py             │   training/  тренер, оптимизаторы
                                  │   data/      генератор ALU, курикулум
                                  │   parallel/  threadpool, барьеры
                                  │   telemetry/ счётчики, репортёр
@@ -99,7 +96,7 @@ cengine/
 ├── include/          # Публичные C-заголовки (cengine.h, tensor.h, ...)
 ├── src/              # Реализация (core, math, nn, autograd,
 │   │                 #   training, data, parallel, telemetry)
-├── python/           # ctypes-биндинги, тренер, конфиг, телеметрия
+├── cengine/          # ctypes-биндинги, тренер, конфиг, телеметрия
 ├── tests/
 │   ├── test_phase1.c             # C-тесты (make test)
 │   └── test_recurrent_cengine.py # Python-тесты (pytest)

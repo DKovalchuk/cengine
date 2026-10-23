@@ -63,11 +63,8 @@ python -m pytest tests/ -q
 ## Python usage
 
 ```python
-import sys
-sys.path.insert(0, ".")
-
-from python.bindings import lib, check
-from python.module import RecurrentExpert
+from cengine.bindings import lib, check
+from cengine.module import RecurrentExpert
 
 check(lib.ce_init())
 
@@ -78,13 +75,13 @@ expert = RecurrentExpert(hidden_size=8, name="demo")
 ## Architecture
 
 ```
-Python (ctypes)                    C11 core
+python (ctypes)                     C11 core
 ─────────────────                  ─────────────────────────────
-python/bindings.py   ── FFI ──►    core/       tensor, memory pool
-python/module.py                 │   math/      AVX2 kernels
-python/trainer.py                │   nn/        layers, recurrent
-python/config.py                 │   autograd/  tape, backward
-python/telemetry.py              │   training/  trainer, optimizers
+cengine/bindings.py  ── FFI ──►    core/       tensor, memory pool
+cengine/module.py                │   math/      AVX2 kernels
+cengine/trainer.py               │   nn/        layers, recurrent
+cengine/config.py                │   autograd/  tape, backward
+cengine/telemetry.py             │   training/  trainer, optimizers
                                  │   data/      ALU gen, curriculum
                                  │   parallel/  threadpool, barriers
                                  │   telemetry/ counters, reporter
@@ -99,7 +96,7 @@ cengine/
 ├── include/          # Public C headers (cengine.h, tensor.h, ...)
 ├── src/              # Implementation (core, math, nn, autograd,
 │   │                 #   training, data, parallel, telemetry)
-├── python/           # ctypes bindings, trainer, config, telemetry
+├── cengine/          # ctypes bindings, trainer, config, telemetry
 ├── tests/
 │   ├── test_phase1.c             # C unit tests (make test)
 │   └── test_recurrent_cengine.py # Python tests (pytest)
