@@ -119,6 +119,9 @@ ce_status_t  ce_sequential_forward(ce_module_t* seq,
 ce_status_t  ce_sequential_backward(ce_module_t* seq,
                                     ce_tensor_t* grad_output,
                                     ce_tensor_t* grad_input);
+/* Destroy the container and its whole child tree (recurses into nested
+ * containers).  The module and its state are freed. */
+void         ce_sequential_destroy(ce_module_t* seq);
 
 #ifdef __cplusplus
 }

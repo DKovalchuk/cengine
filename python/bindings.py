@@ -872,6 +872,9 @@ lib.ce_sequential_forward.restype = c_int
 lib.ce_sequential_backward.argtypes = [POINTER(CeModule), POINTER(CeTensor), POINTER(CeTensor)]
 lib.ce_sequential_backward.restype = c_int
 
+lib.ce_sequential_destroy.argtypes = [POINTER(CeModule)]
+lib.ce_sequential_destroy.restype = None
+
 # ---- recurrent.h ----
 lib.ce_recurrent_expert_create.argtypes = [c_int, c_char_p]
 lib.ce_recurrent_expert_create.restype = POINTER(CeModule)
@@ -1045,6 +1048,9 @@ lib.ce_compute_grad.restype = c_int
 # ---- data.h ----
 lib.ce_alu_gen_create.argtypes = [c_int, c_int, POINTER(c_int), c_int, c_int64]
 lib.ce_alu_gen_create.restype = POINTER(CeAluGen)
+
+lib.ce_alu_gen_destroy.argtypes = [POINTER(CeAluGen)]
+lib.ce_alu_gen_destroy.restype = None
 
 lib.ce_alu_gen_sample.argtypes = [POINTER(CeAluGen)]
 lib.ce_alu_gen_sample.restype = POINTER(CeAluSample)

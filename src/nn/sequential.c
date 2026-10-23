@@ -193,3 +193,26 @@ ce_status_t ce_sequential_backward(ce_module_t* seq_mod,
 
     return CE_OK;
 }
+
+void ce_sequential_destroy(ce_module_t* mod) {
+    if (!mod) return;
+    ce_sequential_t* seq = (ce_sequential_t*)mod->internal_state;
+    if (seq) {
+        for (int i = 0; i < seq->count; i++) {
+            ce_module_t* child = seq->children[i];
+            if (!child) continue;
+            /* Nested containers own THEIR children too: dispatch so the
+             * whole tree is freed — generic ce_module_destroy knows nothing
+             * about container state and would leak the subtree. */
+            if (child->forward == ce_sequential_forward) {
+                ce_sequential_destroy(child);
+            } else {
+                ce_module_destroy(child);
+            }
+        }
+        free(seq->children);
+        mod->internal_state = NULL;
+        free(seq);
+    }
+    ce_module_destroy(mod);
+}

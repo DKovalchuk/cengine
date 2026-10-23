@@ -84,6 +84,7 @@ class Module:
         self._handle: POINTER(CeModule) | None = None
         self._children: list[Module] = []
         self._name: str = ""
+        self._parent: Module | None = None
 
     # ── Parameter access ──────────────────────────────────────────────────
 
@@ -138,11 +139,30 @@ class Module:
 
     # ── Lifecycle ─────────────────────────────────────────────────────────
 
+    def close(self) -> None:
+        """Release the underlying C module (idempotent).
+
+        A leaf that belongs to a container is OWNED by that container —
+        closing it explicitly is a no-op, so GC of a child reference can
+        never free memory the container still uses.
+        """
+        if self._parent is not None:
+            return
+        if self._handle is not None:
+            lib.ce_module_destroy(self._handle)
+            self._handle = None
+
+    def _mark_closed(self) -> None:
+        """Invalidate this module's and every descendant's C handle."""
+        self._handle = None
+        for child in self._children:
+            child._mark_closed()
+
     def __del__(self) -> None:
-        # Children are destroyed by their parent container (Sequential).
-        # Leaf modules owned directly by the user are destroyed here.
-        # We rely on the C refcount / destroy idempotency.
-        pass
+        try:
+            self.close()
+        except Exception:
+            pass
 
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}(name={self._name!r})"
@@ -307,7 +327,23 @@ class Sequential(Module):
     def add_module(self, name: str, module: Module) -> None:
         """Add a child module to the container."""
         check(lib.ce_sequential_add(self._handle, module.handle))
+        module._parent = self
         self._children.append(module)
+
+    def close(self) -> None:
+        """Destroy the C container and its whole subtree (idempotent).
+
+        The container owns its children (nested containers included): the
+        C-side recursive destroy frees them all, then every Python handle
+        pointing into the subtree is invalidated — touching them afterwards
+        would be use-after-free.  Honouring _parent stops a nested
+        container from tearing itself out from under its own parent.
+        """
+        if self._parent is not None:
+            return
+        if self._handle is not None:
+            lib.ce_sequential_destroy(self._handle)
+        self._mark_closed()
 
     def forward(self, input_tensor: POINTER(CeTensor), output_tensor: POINTER(CeTensor)) -> None:
         check(lib.ce_sequential_forward(self._handle, input_tensor, output_tensor))
