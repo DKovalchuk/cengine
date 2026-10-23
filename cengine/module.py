@@ -119,6 +119,32 @@ class Module:
         for child in self._children:
             child._collect_grads(out)
 
+    def architecture(self):
+        """Layer description for rebuilding an equivalent torch module.
+
+        Returns a list of layer dicts for a Sequential container and a
+        single dict for a leaf module.  Saved into ``.pt`` metadata by
+        ``save_model_pytorch`` and consumed by
+        ``cengine.pytorch_bridge.build_torch_model``.
+        """
+        cls = type(self).__name__
+        if cls == "Sequential":
+            return [child.architecture() for child in self._children]
+        if cls == "Linear":
+            return {
+                "type": "linear",
+                "in_features": self.in_features,
+                "out_features": self.out_features,
+            }
+        if cls == "ELU":
+            return {"type": "elu", "alpha": self.alpha}
+        if cls == "GumbelSoftmax":
+            return {"type": "gumbel_softmax", "temperature": self.temperature}
+        if cls == "RecurrentExpert":
+            return {"type": "recurrent_expert", "hidden_size": self.hidden_size}
+        # Sigmoid / Tanh / Softmax / anything else: class name as-is.
+        return {"type": cls.lower()}
+
     @property
     def handle(self) -> POINTER(CeModule):
         """The underlying C module handle."""

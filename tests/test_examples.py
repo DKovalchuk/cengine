@@ -21,6 +21,7 @@ EXAMPLES = [
     "02_checkpoints_telemetry.py",
     "03_manual_training_loop.py",
     "04_recurrent_expert.py",
+    "05_pytorch_cuda.py",
 ]
 
 

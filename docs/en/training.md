@@ -122,6 +122,36 @@ other.load_model("checkpoints/run1")       # into a freshly built model
 Automatic checkpoints use the same path: every `save_every_n_epochs` the
 trainer writes `checkpoint_dir` plus a JSON sidecar per epoch.
 
+## PyTorch interop (CUDA)
+
+Export a checkpoint and continue training on the GPU:
+
+```python
+trainer.save_model_pytorch("model.pt")     # state_dict + architecture metadata
+
+from cengine.pytorch_bridge import load_model_torch
+torch_model = load_model_torch("model.pt") # rebuilds the equivalent torch module
+torch_model.to("cuda")
+# ... regular torch training ...
+torch.save({"state_dict": torch_model.state_dict(),
+            "metadata": {"architecture": model.architecture()}}, "model.pt")
+
+trainer.load_model_pytorch("model.pt")     # weights back into cengine
+```
+
+- `Module.architecture()` records layer types and sizes in the `.pt`
+  metadata, so the file itself says how to rebuild the model.
+- Sequential checkpoints use torch `nn.Sequential` child numbering
+  (`0.weight`, `2.bias`); MoE keys are `experts.{i}.{name}` —
+  `load_state_dict(strict=True)` matches.
+- The bridge is pinned by tests: the rebuilt torch module reproduces the
+  cengine forward pass (maxdiff < 1e-5), and both loaders are two-phase
+  (a bad checkpoint never partially loads).
+- `RecurrentExpert` has no generic torch equivalent — build your recurrent
+  module manually; its parameter keys (`w1`, `b1`, …) match the C
+  registration order.
+- Runnable version: [`examples/05_pytorch_cuda.py`](../../examples/05_pytorch_cuda.py).
+
 ## Telemetry
 
 ```python

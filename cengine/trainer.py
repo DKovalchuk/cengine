@@ -1121,6 +1121,7 @@ class CEngineTrainer:
             "loss": float(self._current_loss),
             "best_loss": float(self._best_loss),
             "model_type": type(self._model).__name__,
+            "architecture": self._model.architecture(),
         }
         torch.save({"state_dict": state_dict, "metadata": metadata}, path)
 
@@ -1191,6 +1192,19 @@ class CEngineTrainer:
         params = self._model.parameters()
         n = len(params)
 
+        # Sequential container: torch nn.Sequential numbers every child
+        # from 0 (activations included), so its state_dict keys are
+        # "0.weight" / "2.bias" — the same numbering a rebuilt
+        # torch.nn.Sequential uses, making load_state_dict(strict) work.
+        if type(self._model).__name__ == "Sequential":
+            names = []
+            for i, child in enumerate(self._model._children):
+                if type(child).__name__ == "Linear":
+                    names.append(f"{i}.weight")
+                    names.append(f"{i}.bias")
+            if names and len(names) == n:
+                return names
+
         # RecurrentExpert has exactly 8 params
         if n == 8:
             return list(self._RECURRENT_PARAM_NAMES)
@@ -1200,7 +1214,7 @@ class CEngineTrainer:
             names = []
             for i, _ in enumerate(self._model.experts):
                 for pname in self._RECURRENT_PARAM_NAMES:
-                    names.append(f"expert.{i}.{pname}")
+                    names.append(f"experts.{i}.{pname}")
             return names
 
         # Fallback: generic names
