@@ -12,6 +12,9 @@ Tiny CPU training engine for neural networks, written in C11 (AVX2/FMA, OpenMP),
 - [Features](#features)
 - [Requirements](#requirements)
 - [Build](#build)
+- [Install with pip](#install-with-pip)
+- [Documentation](#documentation)
+- [Examples](#examples)
 - [Testing](#testing)
 - [Python usage](#python-usage)
 - [Architecture](#architecture)
@@ -28,13 +31,14 @@ cengine is a self-contained training engine that runs neural network training on
 
 - **Tensors** — aligned allocations (64-byte), memory pool, memory tracker
 - **Layers** — Linear, ELU, Sigmoid, Tanh, Softmax, KAN (Kolmogorov–Arnold) layers, sequential containers, recurrent experts with carry propagation
-- **Autograd** — tape-based backward pass
+- **Autograd** — tape-based backward pass with per-entry state destructors
 - **Optimizers** — SGD, Adam, AdamW; gradient clipping; LR schedulers
-- **Losses** — BCE, MSE, load-balancing and Z-loss for MoE routing
-- **Data** — ALU dataset generator (ADD/SUB/AND/XOR/OR), curriculum staging, dataloader
+- **Losses** — BCE and MSE (both mask-aware), load-balancing and Z-loss for MoE routing
+- **Data** — ALU dataset generator (ADD/SUB/AND/XOR/OR), curriculum staging, prefetching dataloader with race-free epoch reseeding
 - **Performance** — AVX2/FMA kernels, OpenMP batch parallelism, threadpool
-- **Telemetry** — perf counters, metric collector, reporter
-- **Python bindings** — full ctypes API surface (172 functions), trainer class, config dataclasses
+- **Checkpoints** — atomic saves, validated all-or-nothing loads, PyTorch interop
+- **Telemetry** — perf counters, lock-free metric ring, reporter, CSV/JSON export
+- **Python bindings** — full ctypes API surface, trainer class, config dataclasses, `pip install`-able package
 
 ## Requirements
 
@@ -48,6 +52,37 @@ cengine is a self-contained training engine that runs neural network training on
 make          # shared (build/lib/libcengine.so) + static (build/lib/libcengine.a)
 make clean
 ```
+
+## Install with pip
+
+```bash
+pip install .    # runs `make shared` and ships libcengine.so inside the package
+```
+
+The installed package is self-contained; the library search order is
+`CENGINE_LIB` env → package directory → `build/lib/` → system loader.
+See [Getting started](docs/en/getting-started.md) for details.
+
+## Documentation
+
+Guides are available in English and Russian:
+
+| Guide | English | Русский |
+| --- | --- | --- |
+| Getting started | [docs/en/getting-started.md](docs/en/getting-started.md) | [docs/ru/getting-started.md](docs/ru/getting-started.md) |
+| Training (config, checkpoints, telemetry) | [docs/en/training.md](docs/en/training.md) | [docs/ru/training.md](docs/ru/training.md) |
+| Python API | [docs/en/python-api.md](docs/en/python-api.md) | [docs/ru/python-api.md](docs/ru/python-api.md) |
+| Architecture | [docs/en/architecture.md](docs/en/architecture.md) | [docs/ru/architecture.md](docs/ru/architecture.md) |
+
+## Examples
+
+Runnable scripts under [`examples/`](examples/) — every one of them is
+executed by CI on each change:
+
+- [`01_quickstart_alu.py`](examples/01_quickstart_alu.py) — train an MLP on the ALU task
+- [`02_checkpoints_telemetry.py`](examples/02_checkpoints_telemetry.py) — save, reload, resume, export metrics
+- [`03_manual_training_loop.py`](examples/03_manual_training_loop.py) — forward/backward/Adam without the trainer
+- [`04_recurrent_expert.py`](examples/04_recurrent_expert.py) — recurrent expert with carry propagation
 
 ## Testing
 
@@ -63,19 +98,27 @@ python -m pytest tests/ -q
 ## Python usage
 
 ```python
-from cengine.bindings import lib, check
-from cengine.module import RecurrentExpert
+from cengine import CEngineTrainer, TrainingConfig, ELU, Linear, Sequential, Sigmoid
 
-check(lib.ce_init())
-
-expert = RecurrentExpert(hidden_size=8, name="demo")
-# tensors, forward/backward — see tests/test_recurrent_cengine.py for examples
+model = Sequential(
+    Linear(19, 64), ELU(),
+    Linear(64, 64), ELU(),
+    Linear(64, 16), Sigmoid(),
+    name="alu_mlp",
+)
+cfg = TrainingConfig(total_epochs=10, batch_size=64, samples_per_epoch=512)
+trainer = CEngineTrainer(model, cfg)
+trainer.start(blocking=True)
+print("final loss:", trainer.current_loss)
+model.close()
 ```
+
+More: [Getting started](docs/en/getting-started.md) · [Python API](docs/en/python-api.md)
 
 ## Architecture
 
 ```
-python (ctypes)                     C11 core
+Python (ctypes)                    C11 core
 ─────────────────                  ─────────────────────────────
 cengine/bindings.py  ── FFI ──►    core/       tensor, memory pool
 cengine/module.py                │   math/      AVX2 kernels
@@ -87,7 +130,7 @@ cengine/telemetry.py             │   training/  trainer, optimizers
                                  │   telemetry/ counters, reporter
 ```
 
-Detailed layer-by-layer documentation: [docs/](docs/).
+Detailed layer-by-layer documentation: [Architecture](docs/en/architecture.md).
 
 ## Project structure
 
@@ -97,10 +140,11 @@ cengine/
 ├── src/              # Implementation (core, math, nn, autograd,
 │   │                 #   training, data, parallel, telemetry)
 ├── cengine/          # ctypes bindings, trainer, config, telemetry
-├── tests/
-│   ├── test_phase1.c             # C unit tests (make test)
-│   └── test_recurrent_cengine.py # Python tests (pytest)
-├── .github/workflows/            # CI (GitHub Actions)
+├── docs/en, docs/ru  # Bilingual guides (navigation hub: this README)
+├── examples/         # Runnable usage scenarios (smoke-tested in CI)
+├── tests/            # C unit tests (make test) + Python tests (pytest)
+├── .github/workflows/ # CI (GitHub Actions)
+├── pyproject.toml    # pip packaging (builds the C library on install)
 ├── Makefile
 └── LICENSE           # MIT
 ```
@@ -111,17 +155,19 @@ Every push to `main` and every pull request runs [.github/workflows/ci.yml](.git
 
 1. `make` — build shared and static libraries
 2. `make test` — C unit tests
-3. `pytest` — Python tests
+3. `pytest` — Python tests (determinism, docs navigation, examples, packaging)
+4. packaging smoke test — `pip install .` into a clean venv + import from outside the repo
 
 `main` is protected: direct pushes and force-pushes are rejected; all changes go through pull requests.
 
 ## Status and known limitations
 
-Early stage, under active hardening (see [pull requests](https://github.com/DKovalchuk/cengine/pulls) for the current work):
+Early stage, hardened by an ongoing audit (see [pull requests](https://github.com/DKovalchuk/cengine/pulls)):
 
-- **Input shape validation** — a bug where the recurrent forward pass assumes a hardcoded input width is being fixed; until then Python tests may fail intermittently (tracked in CI)
-- **AVX2-only build** — `-march=native` is currently required; a portable build flag is planned
-- **Known gaps** — tape backward handles only the last node; `kan_recurrent` has no backward pass; some C modules are not yet covered by tests
+- **AVX2-only build** — `-march=native -mavx2` is currently required; a portable build flag is planned
+- **Autograd tape** — single-entry backward works; multi-entry chains are rejected with `CE_ERR_NOT_IMPLEMENTED` — a chained tape is a planned post-release feature, and a loud refusal beats silently wrong gradients
+- **`kan_recurrent`** — forward pass only; training a backward-less model fails loudly with `CE_ERR_NOT_INITIALIZED` instead of crashing
+- **Test coverage** — core paths are pinned (losses, batch layout, checkpoints, threadpool, reseeding, packaging, docs navigation, examples); some C modules still lack dedicated unit tests
 
 ## License
 
