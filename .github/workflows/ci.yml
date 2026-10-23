@@ -27,3 +27,19 @@ jobs:
 
       - name: Python tests
         run: python -m pytest tests/ -q
+
+      - name: Packaging smoke test
+        run: |
+          python -m venv /tmp/cengine-smoke-venv
+          /tmp/cengine-smoke-venv/bin/pip install .
+          cd "$RUNNER_TEMP"
+          /tmp/cengine-smoke-venv/bin/python -c "
+          import os
+          from cengine import bindings
+          assert bindings.lib is not None, 'installed package cannot load libcengine.so'
+          pkg_dir = os.path.dirname(os.path.abspath(bindings.__file__))
+          so = os.path.join(pkg_dir, 'libcengine.so')
+          assert os.path.isfile(so), f'missing packaged library: {so}'
+          bindings.check(bindings.lib.ce_init())
+          print('packaging smoke ok:', so)
+          "

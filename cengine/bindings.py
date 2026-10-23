@@ -93,26 +93,42 @@ __all__ = [
 # Library loading
 # ---------------------------------------------------------------------------
 
-_LIB_SEARCH_PATHS = [
-    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "build", "lib", "libcengine.so"),
-    # Fallback: LD_LIBRARY_PATH / system search
-    "libcengine.so",
-]
+def _library_candidates() -> list[str]:
+    """Ordered search list for libcengine.so.
 
-lib: ctypes.CDLL | None = None
+    1. ``CENGINE_LIB`` — explicit override (tests, custom installs);
+    2. next to this package — the layout produced by ``pip install .``;
+    3. ``build/lib/`` at the repo root — a development checkout after ``make``;
+    4. bare name — resolved by the system loader (``LD_LIBRARY_PATH``).
+    """
+    here = os.path.dirname(os.path.abspath(__file__))
+    candidates = []
+    env_lib = os.environ.get("CENGINE_LIB")
+    if env_lib:
+        candidates.append(env_lib)
+    candidates.append(os.path.join(here, "libcengine.so"))
+    candidates.append(os.path.join(here, "..", "build", "lib", "libcengine.so"))
+    candidates.append("libcengine.so")
+    return candidates
 
-for _p in _LIB_SEARCH_PATHS:
-    _p = os.path.normpath(_p)
-    try:
-        lib = ctypes.CDLL(_p)
-        break
-    except OSError:
-        continue
+
+def _load_library() -> ctypes.CDLL | None:
+    for path in _library_candidates():
+        try:
+            return ctypes.CDLL(os.path.normpath(path))
+        except OSError:
+            continue
+    return None
+
+
+lib: ctypes.CDLL | None = _load_library()
 
 if lib is None:
     raise OSError(
-        "Cannot load libcengine.so — build it first with:  make -C cengine shared\n"
-        "Searched:\n  " + "\n  ".join(os.path.normpath(p) for p in _LIB_SEARCH_PATHS)
+        "Cannot load libcengine.so — build it first with `make`, or point "
+        "the CENGINE_LIB environment variable at the library.\n"
+        "Searched:\n  "
+        + "\n  ".join(os.path.normpath(p) for p in _library_candidates())
     )
 
 # ---------------------------------------------------------------------------
