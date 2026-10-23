@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cengine"
+version = "0.1.0"
+description = "Tiny CPU training engine for neural networks (C11, AVX2/FMA, OpenMP) with Python bindings"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.9"
+dependencies = ["numpy>=1.22"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: C",
+    "Operating System :: POSIX :: Linux",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+[project.urls]
+Repository = "https://github.com/DKovalchuk/cengine"
+
+[tool.setuptools]
+packages = ["cengine"]
+
+[tool.setuptools.package-data]
+cengine = ["libcengine.so"]

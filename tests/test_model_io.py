@@ -30,10 +30,10 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from python.bindings import CE_OK, CEngineError, check, lib
-from python.module import Linear
-from python.trainer import CEngineTrainer
-from python.config import TrainingConfig
+from cengine.bindings import CE_OK, CEngineError, check, lib
+from cengine.module import Linear
+from cengine.trainer import CEngineTrainer
+from cengine.config import TrainingConfig
 
 check(lib.ce_init())
 

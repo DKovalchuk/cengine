@@ -27,8 +27,8 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from python.bindings import CE_OK, c_int, c_int64, check, lib
-from python.trainer import _batch_to_tensors
+from cengine.bindings import CE_OK, c_int, c_int64, check, lib
+from cengine.trainer import _batch_to_tensors
 
 check(lib.ce_init())
 

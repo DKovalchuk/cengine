@@ -7,7 +7,7 @@ kernels, lock-free telemetry, and async data loading.
 
 Quick start::
 
-    from cengine.python import (
+    from cengine import (
         CEngineTrainer, TrainingConfig,
         Sequential, Linear, ELU, Sigmoid,
     )

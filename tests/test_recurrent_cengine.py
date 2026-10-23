@@ -19,8 +19,8 @@ import pytest
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
 
-from python.bindings import lib, CeConfig, CeTensor, CEngineError, c_int64, c_float, c_bool, c_int, c_size_t, check
-from python.module import RecurrentExpert, Sequential, Linear, ELU
+from cengine.bindings import lib, CeConfig, CeTensor, CEngineError, c_int64, c_float, c_bool, c_int, c_size_t, check
+from cengine.module import RecurrentExpert, Sequential, Linear, ELU
 
 # Ensure C engine is initialized
 check(lib.ce_init())
